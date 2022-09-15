@@ -1,5 +1,2 @@
-demo/* linguist-detectable
-*.js linguist-language=JavaScript
-*.js linguist-detectable
-*.css linguist-language=CSS
-*.css linguist-detectable
+demo/kapoor/* linguist-detectable
+demo/webmix/* linguist-detectable
