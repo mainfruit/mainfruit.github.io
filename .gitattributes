@@ -1,2 +1,4 @@
 demo/kapoor/* linguist-detectable
 demo/webmix/* linguist-detectable
+*.js linguist-language=JavaScript
+*.css linguist-language=CSS
