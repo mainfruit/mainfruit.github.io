@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infinite Low Poly Landscape - Master Lens</title>
+    <style>
+        body { margin: 0; background-color: #000; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GUI } from 'lil-gui';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+        // --- Configuration & Params ---
+        const params = {
+            speed: 0.1,
+            noiseScale: 0.05,
+            amplitude: 8,
+            octaves: 3,
+            segments: 60,
+            lineColor: 0xffffff,
+            lineOpacity: 1.0,
+            color1: 0x000000,
+            color2: 0x111111,
+            // Post-processing (Lens)
+            lensDistortion: -0.2,
+            lensChromatic: 0.01,
+            lensBlur: 0.02,
+            lensVignette: 0.4,
+            // Post-processing (CRT/Film)
+            scanlineIntensity: 0.1,
+            noiseIntensity: 0.05,
+        };
+
+        // --- Shared GLSL Chunks ---
+        const SHARED_NOISE_GLSL = `
+            precision highp float;
+            uniform float uOffsetZ;
+            uniform float uNoiseScale;
+            uniform float uAmplitude;
+            uniform float uOctaves;
+
+            vec2 hash22(vec2 p) {
+                p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+                return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
+            }
+
+            float noise(vec2 p) {
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                vec2 u = f * f * (3.0 - 2.0 * f);
+                return mix(mix(dot(hash22(i + vec2(0.0, 0.0)), f - vec2(0.0, 0.0)),
+                               dot(hash22(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0)), u.x),
+                           mix(dot(hash22(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0)),
+                               dot(hash22(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0)), u.x), u.y);
+            }
+
+            float fbm(vec2 p) {
+                float v = 0.0;
+                float a = 0.5;
+                vec2 shift = vec2(100.0);
+                for (int i = 0; i < 6; i++) {
+                    if (float(i) >= uOctaves) break;
+                    v += a * noise(p);
+                    p = p * 2.0 + shift;
+                    a *= 0.5;
+                }
+                return v;
+            }
+
+            float getTerrainHeight(vec2 p) {
+                return fbm(p * uNoiseScale + vec2(0.0, uOffsetZ)) * uAmplitude;
+            }
+        `;
+
+        // --- Master Post-Processing Shader ---
+        const MasterPostShader = {
+            uniforms: {
+                'tDiffuse': { value: null },
+                'uDistortion': { value: params.lensDistortion },
+                'uChromatic': { value: params.lensChromatic },
+                'uBlur': { value: params.lensBlur },
+                'uVignette': { value: params.lensVignette },
+                'uScanlineIntensity': { value: params.scanlineIntensity },
+                'uNoiseIntensity': { value: params.noiseIntensity },
+                'uTime': { value: 0.0 }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform float uDistortion;
+                uniform float uChromatic;
+                uniform float uBlur;
+                uniform float uVignette;
+                uniform float uScanlineIntensity;
+                uniform float uNoiseIntensity;
+                uniform float uTime;
+                varying vec2 vUv;
+
+                // Pseudo-random for noise
+                float random(vec2 st) {
+                    return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+                }
+
+                void main() {
+                    vec2 center = vec2(0.5, 0.5);
+                    vec2 dir = vUv - center;
+                    float r = length(dir);
+                    
+                    // 1. Distortion (Barrel/Pincushion)
+                    vec2 distortedUv = vUv + dir * (uDistortion * r * r);
+
+                    // 2. Chromatic Aberration
+                    float chrom = uChromatic * r;
+                    float rCol = texture2D(tDiffuse, distortedUv + vec2(chrom, 0.0)).r;
+                    float gCol = texture2D(tDiffuse, distortedUv).g;
+                    float bCol = texture2D(tDiffuse, distortedUv - vec2(chrom, 0.0)).b;
+                    vec4 color = vec4(rCol, gCol, bCol, 1.0);
+
+                    // 3. Soft Blur
+                    if (uBlur > 0.0) {
+                        float bR = uBlur * r;
+                        vec4 blurCol = vec4(0.0);
+                        blurCol += texture2D(tDiffuse, distortedUv + vec2(bR, bR));
+                        blurCol += texture2D(tDiffuse, distortedUv + vec2(-bR, bR));
+                        blurCol += texture2D(tDiffuse, distortedUv + vec2(bR, -bR));
+                        blurCol += texture2D(tDiffuse, distortedUv + vec2(-bR, -bR));
+                        blurCol /= 4.0;
+                        color = mix(color, blurCol, 0.5);
+                    }
+
+                    // 4. Scanlines
+                    // Using sin wave on screen space Y
+                    float scanline = sin(vUv.y * 800.0) * uScanlineIntensity;
+                    color.rgb -= scanline * 0.05;
+
+                    // 5. Film Grain (Noise)
+                    float noise = (random(vUv + uTime) - 0.5) * uNoiseIntensity;
+                    color.rgb += noise;
+
+                    // 6. Vignette
+                    float vig = smoothstep(1.0, 1.0 - uVignette, r);
+                    color.rgb *= vig;
+                    
+                    gl_FragColor = color;
+                }
+            `
+        };
+
+        // --- Application Logic ---
+        let scene, camera, renderer, controls, terrainMesh, gridLines, terrainGeometry, gridGeometry;
+        let composer, masterPass;
+        let offsetZ = 0;
+        let clock = new THREE.Clock();
+        let terrainUniforms = {
+            uOffsetZ: { value: 0 },
+            uNoiseScale: { value: params.noiseScale },
+            uAmplitude: { value: params.amplitude },
+            uOctaves: { value: params.octaves },
+            uColor1: { value: new THREE.Color(params.color1) },
+            uColor2: { value: new THREE.Color(params.color2) }
+        };
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+            camera.position.set(0, 40, 80);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            // Post-processing setup
+            composer = new EffectComposer(renderer);
+            composer.addPass(new RenderPass(scene, camera));
+            masterPass = new ShaderPass(MasterPostShader);
+            composer.addPass(masterPass);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+
+            createTerrain();
+            createGUI();
+
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        function createTerrain() {
+            if (terrainMesh) {
+                scene.remove(terrainMesh);
+                scene.remove(gridLines);
+                terrainGeometry.dispose();
+                gridGeometry.dispose();
+            }
+
+            const size = 600;
+            const segments = params.segments;
+            terrainGeometry = new THREE.PlaneGeometry(size, size, segments, segments);
+            terrainGeometry.rotateX(-Math.PI / 2);
+
+            const fullShaderChunk = `
+                varying vec2 vWorldXZ;
+                ${SHARED_NOISE_GLSL}
+            `;
+
+            const applyShader = (material, isFace = true) => {
+                material.onBeforeCompile = (shader) => {
+                    shader.uniforms.uOffsetZ = terrainUniforms.uOffsetZ;
+                    shader.uniforms.uNoiseScale = terrainUniforms.uNoiseScale;
+                    shader.uniforms.uAmplitude = terrainUniforms.uAmplitude;
+                    shader.uniforms.uOctaves = terrainUniforms.uOctaves;
+                    if (isFace) {
+                        shader.uniforms.uColor1 = terrainUniforms.uColor1;
+                        shader.uniforms.uColor2 = terrainUniforms.uColor2;
+                    }
+
+                    shader.vertexShader = fullShaderChunk + shader.vertexShader;
+                    shader.vertexShader = shader.vertexShader.replace(
+                        '#include <begin_vertex>',
+                        `
+                        vec3 transformed = vec3(position);
+                        transformed.y += getTerrainHeight(transformed.xz);
+                        vWorldXZ = transformed.xz;
+                        `
+                    );
+
+                    if (isFace) {
+                        shader.fragmentShader = shader.fragmentShader.replace(
+                            '#include <color_fragment>',
+                            `
+                            #include <color_fragment>
+                            float check = mod(floor(vWorldXZ.x / 10.0) + floor(vWorldXZ.y / 10.0), 2.0);
+                            diffuseColor.rgb = mix(uColor1.rgb, uColor2.rgb, check);
+                            `
+                        );
+                    }
+                };
+            };
+
+            // Face Mesh
+            const faceMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            applyShader(faceMaterial, true);
+            terrainMesh = new THREE.Mesh(terrainGeometry, faceMaterial);
+            scene.add(terrainMesh);
+
+            // Grid Lines
+            const step = size / segments;
+            const start = -size / 2;
+            const linePositions = [];
+            for (let i = 0; i <= segments; i++) {
+                const pos = start + i * step;
+                for (let j = 0; j < segments; j++) {
+                    linePositions.push(start + j * step, 0, pos, start + (j + 1) * step, 0, pos);
+                }
+                for (let j = 0; j < segments; j++) {
+                    linePositions.push(pos, 0, start + j * step, pos, 0, start + (j + 1) * step);
+                }
+            }
+            gridGeometry = new THREE.BufferGeometry();
+            gridGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
+
+            const gridMaterial = new THREE.LineBasicMaterial({ 
+                color: params.lineColor,
+                transparent: true,
+                opacity: params.lineOpacity
+            });
+            applyShader(gridMaterial, false);
+            gridLines = new THREE.LineSegments(gridGeometry, gridMaterial);
+            scene.add(gridLines);
+        }
+
+        function createGUI() {
+            const gui = new GUI();
+            const f1 = gui.addFolder('Movement');
+            f1.add(params, 'speed', 0, 1).name('Scroll Speed');
+            
+            const f2 = gui.addFolder('Noise');
+            f2.add(params, 'noiseScale', 0.01, 0.2).name('Scale').onChange(v => terrainUniforms.uNoiseScale.value = v || 0.01);
+            f2.add(params, 'amplitude', 1, 40).name('Amplitude').onChange(v => terrainUniforms.uAmplitude.value = v);
+            f2.add(params, 'octaves', 1, 6, 1).name('Octaves').onChange(v => terrainUniforms.uOctaves.value = v);
+
+            const f3 = gui.addFolder('Lens Effect');
+            f3.add(params, 'lensDistortion', -0.5, 0.5).name('Distortion').onChange(v => masterPass.uniforms.uDistortion.value = v);
+            f3.add(params, 'lensChromatic', 0, 0.05).name('Chromatic').onChange(v => masterPass.uniforms.uChromatic.value = v);
+            f3.add(params, 'lensBlur', 0, 0.1).name('Blur').onChange(v => masterPass.uniforms.uBlur.value = v);
+            f3.add(params, 'lensVignette', 0, 1).name('Vignette').onChange(v => masterPass.uniforms.uVignette.value = v);
+
+            const f4 = gui.addFolder('Film/CRT');
+            f4.add(params, 'scanlineIntensity', 0, 1).name('Scanlines').onChange(v => masterPass.uniforms.uScanlineIntensity.value = v);
+            f4.add(params, 'noiseIntensity', 0, 0.5).name('Noise').onChange(v => masterPass.uniforms.uNoiseIntensity.value = v);
+
+            const f5 = gui.addFolder('Visuals');
+            f5.add(params, 'segments', 10, 200, 1).name('Resolution').onChange(recreate);
+            f5.addColor(params, 'lineColor').name('Line Color').onChange(v => gridLines.material.color.set(v));
+            f5.add(params, 'lineOpacity', 0, 1).name('Line Opacity').onChange(v => gridLines.material.opacity = v);
+        }
+
+        function recreate() { createTerrain(); }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const elapsed = clock.getElapsedTime();
+
+            offsetZ += params.speed;
+            terrainUniforms.uOffsetZ.value = offsetZ;
+            masterPass.uniforms.uTime.value = elapsed;
+
+            controls.update();
+            composer.render();
+        }
+
+        init();
+    </script>
+</body>
+</html>

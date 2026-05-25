@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Organic Sphere Artwork</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; overflow: hidden; width: 100vw; height: 100vh; }
+        canvas { display: block; width: 100%; height: 100%; }
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+        // ==========================
+        // CONFIGURATION
+        // ==========================
+        const CONFIG = {
+            sphere: {
+                radius: 4,
+                latitudeSegments: 40,
+                longitudeSegments: 60,
+                rectWidth: 0.12,
+                rectHeight: 0.08,
+                gap: 0.03,
+                displacement: 0.15
+            },
+            animation: {
+                amplitude: 0.08,
+                frequency: 0.0003,
+                speed: 1.0,
+                noiseScale: 0.8,
+                smoothing: 0.95,
+                autoRotate: true,
+                autoRotateSpeed: 0.3
+            },
+            postProcess: {
+                rgbShift: 0.0015,
+                blur: 0.001,
+                gloss: 0.25,
+                vignette: 0.3,
+                scanlines: 0.15,
+                noise: 0.08,
+                enabled: true,
+                mix: 1.0
+            },
+            camera: {
+                fov: 45,
+                pixelRatio: 1.5,
+                near: 0.1,
+                far: 100
+            }
+        };
+
+        let originalConfig = JSON.parse(JSON.stringify(CONFIG));
+
+        // ==========================
+        // SETUP
+        // ==========================
+        const canvas = document.getElementById('canvas');
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, CONFIG.camera.pixelRatio));
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x000000);
+
+        const camera = new THREE.PerspectiveCamera(
+            CONFIG.camera.fov,
+            window.innerWidth / window.innerHeight,
+            CONFIG.camera.near,
+            CONFIG.camera.far
+        );
+        camera.position.set(0, 0, 12);
+
+        const controls = new OrbitControls(camera, canvas);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.autoRotate = CONFIG.animation.autoRotate;
+        controls.autoRotateSpeed = CONFIG.animation.autoRotateSpeed;
+        controls.enableZoom = true;
+        controls.zoomSpeed = 0.8;
+        controls.minDistance = 6;
+        controls.maxDistance = 20;
+
+        // ==========================
+        // SPHERE RECTANGLES
+        // ==========================
+        const sphereRects = [];
+        const sphereGroup = new THREE.Group();
+        scene.add(sphereGroup);
+
+        function createSphereRectangles() {
+            sphereGroup.clear();
+            sphereRects.length = 0;
+
+            const latSegments = CONFIG.sphere.latitudeSegments;
+            const lonSegments = CONFIG.sphere.longitudeSegments;
+
+            for (let lat = 0; lat <= latSegments; lat++) {
+                const theta = (lat / latSegments) * Math.PI;
+                const sinTheta = Math.sin(theta);
+                const cosTheta = Math.cos(theta);
+
+                for (let lon = 0; lon < lonSegments; lon++) {
+                    const phi = (lon / lonSegments) * 2 * Math.PI;
+                    const sinPhi = Math.sin(phi);
+                    const cosPhi = Math.cos(phi);
+
+                    const x = CONFIG.sphere.radius * sinTheta * cosPhi;
+                    const y = CONFIG.sphere.radius * cosTheta;
+                    const z = CONFIG.sphere.radius * sinTheta * sinPhi;
+
+                    const rect = new THREE.Mesh(
+                        new THREE.PlaneGeometry(CONFIG.sphere.rectWidth, CONFIG.sphere.rectHeight),
+                        new THREE.MeshBasicMaterial({ color: 0xffffff })
+                    );
+                    rect.position.set(x, y, z);
+                    rect.lookAt(0, 0, 0);
+                    rect.rotateY(Math.PI);
+
+                    rect.userData = {
+                        basePosition: new THREE.Vector3(x, y, z),
+                        baseRotation: new THREE.Quaternion()
+                    };
+                    rect.quaternion.copy(rect.userData.baseRotation);
+
+                    sphereRects.push(rect);
+                    sphereGroup.add(rect);
+                }
+            }
+        }
+
+        createSphereRectangles();
+
+        // ==========================
+        // POST PROCESSING
+        // ==========================
+        const renderScene = new RenderPass(scene, camera);
+
+        const rgbShiftShader = {
+            uniforms: {
+                tDiffuse: { value: null },
+                shift: { value: CONFIG.postProcess.rgbShift }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform float shift;
+                varying vec2 vUv;
+
+                void main() {
+                    vec2 uv = vUv;
+                    float r = texture2D(tDiffuse, uv + vec2(shift, 0.0)).r;
+                    float g = texture2D(tDiffuse, uv).g;
+                    float b = texture2D(tDiffuse, uv - vec2(shift, 0.0)).b;
+                    gl_FragColor = vec4(r, g, b, 1.0);
+                }
+            `
+        };
+
+        const blurShader = {
+            uniforms: {
+                tDiffuse: { value: null },
+                resolution: { value: new THREE.Vector2(1.0, 1.0) },
+                blur: { value: CONFIG.postProcess.blur }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform vec2 resolution;
+                uniform float blur;
+                varying vec2 vUv;
+
+                void main() {
+                    vec2 uv = vUv;
+                    float radius = 1.5 * blur;
+                    vec4 color = vec4(0.0);
+                    float total = 0.0;
+                    for (float x = -2.0; x <= 2.0; x += 1.0) {
+                        for (float y = -2.0; y <= 2.0; y += 1.0) {
+                            vec2 offset = vec2(x, y) * (1.0 / resolution) * radius;
+                            color += texture2D(tDiffuse, uv + offset);
+                            total++;
+                        }
+                    }
+                    gl_FragColor = color / total;
+                }
+            `
+        };
+
+        const glossShader = {
+            uniforms: {
+                tDiffuse: { value: null },
+                gloss: { value: CONFIG.postProcess.gloss }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform float gloss;
+                varying vec2 vUv;
+
+                void main() {
+                    vec4 color = texture2D(tDiffuse, vUv);
+                    vec2 center = vec2(0.5);
+                    float dist = distance(vUv, center);
+                    float shine = 1.0 - smoothstep(0.0, 0.3, dist) * gloss;
+                    color.rgb += shine * 0.15;
+                    gl_FragColor = color;
+                }
+            `
+        };
+
+        const vignetteShader = {
+            uniforms: {
+                tDiffuse: { value: null },
+                vignette: { value: CONFIG.postProcess.vignette }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform float vignette;
+                varying vec2 vUv;
+
+                void main() {
+                    vec4 color = texture2D(tDiffuse, vUv);
+                    vec2 center = vec2(0.5);
+                    float dist = distance(vUv, center);
+                    float fade = 1.0 - smoothstep(0.7, 1.0, dist) * vignette;
+                    gl_FragColor = vec4(color.rgb * fade, color.a);
+                }
+            `
+        };
+
+        const scanlinesShader = {
+            uniforms: {
+                tDiffuse: { value: null },
+                scanlines: { value: CONFIG.postProcess.scanlines }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform float scanlines;
+                varying vec2 vUv;
+
+                void main() {
+                    vec4 color = texture2D(tDiffuse, vUv);
+                    float scan = sin(vUv.y * 800.0) * 0.5 + 0.5;
+                    color.rgb *= 1.0 - scan * scanlines * 0.3;
+                    gl_FragColor = color;
+                }
+            `
+        };
+
+        const noiseShader = {
+            uniforms: {
+                tDiffuse: { value: null },
+                noise: { value: CONFIG.postProcess.noise }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform float noise;
+                varying vec2 vUv;
+
+                void main() {
+                    vec4 color = texture2D(tDiffuse, vUv);
+                    float n = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453);
+                    color.rgb += (n - 0.5) * noise * 0.3;
+                    gl_FragColor = color;
+                }
+            `
+        };
+
+        const effectComposer = new EffectComposer(renderer);
+        effectComposer.addPass(renderScene);
+
+        const rgbShiftPass = new ShaderPass(rgbShiftShader);
+        const blurPass = new ShaderPass(blurShader);
+        const glossPass = new ShaderPass(glossShader);
+        const vignettePass = new ShaderPass(vignetteShader);
+        const scanlinesPass = new ShaderPass(scanlinesShader);
+        const noisePass = new ShaderPass(noiseShader);
+
+        effectComposer.addPass(rgbShiftPass);
+        effectComposer.addPass(blurPass);
+        effectComposer.addPass(glossPass);
+        effectComposer.addPass(vignettePass);
+        effectComposer.addPass(scanlinesPass);
+        effectComposer.addPass(noisePass);
+
+        // ==========================
+        // GUI
+        // ==========================
+        let guiVisible = false;
+        let gui = null;
+
+        function initGUI() {
+            import('./three/addons/libs/lil-gui.module.min.js').then(module => {
+                if (module.GUI) {
+                    gui = new module.GUI({ container: document.body });
+                    gui.domElement.style.display = 'none';
+
+                    const sphereFolder = gui.addFolder('Sphere');
+                    const sphereParams = {
+                        radius: CONFIG.sphere.radius,
+                        latitudeSegments: CONFIG.sphere.latitudeSegments,
+                        longitudeSegments: CONFIG.sphere.longitudeSegments,
+                        rectWidth: CONFIG.sphere.rectWidth,
+                        rectHeight: CONFIG.sphere.rectHeight,
+                        gap: CONFIG.sphere.gap,
+                        displacement: CONFIG.sphere.displacement
+                    };
+
+                    sphereFolder.add(sphereParams, 'radius', 1, 10).name('Radius').onChange(v => {
+                        CONFIG.sphere.radius = v;
+                        createSphereRectangles();
+                    });
+                    sphereFolder.add(sphereParams, 'latitudeSegments', 10, 100).name('Lat Density').onChange(v => {
+                        CONFIG.sphere.latitudeSegments = Math.round(v);
+                        createSphereRectangles();
+                    });
+                    sphereFolder.add(sphereParams, 'longitudeSegments', 20, 120).name('Lon Density').onChange(v => {
+                        CONFIG.sphere.longitudeSegments = Math.round(v);
+                        createSphereRectangles();
+                    });
+                    sphereFolder.add(sphereParams, 'rectWidth', 0.05, 0.25).name('Rect Width').onChange(v => {
+                        CONFIG.sphere.rectWidth = v;
+                        createSphereRectangles();
+                    });
+                    sphereFolder.add(sphereParams, 'rectHeight', 0.03, 0.15).name('Rect Height').onChange(v => {
+                        CONFIG.sphere.rectHeight = v;
+                        createSphereRectangles();
+                    });
+                    sphereFolder.add(sphereParams, 'gap', 0.01, 0.1).name('Gap').onChange(v => {
+                        CONFIG.sphere.gap = v;
+                        createSphereRectangles();
+                    });
+                    sphereFolder.add(sphereParams, 'displacement', 0.0, 0.5).name('Displacement').onChange(v => {
+                        CONFIG.sphere.displacement = v;
+                    });
+
+                    const animFolder = gui.addFolder('Animation');
+                    const animParams = {
+                        amplitude: CONFIG.animation.amplitude,
+                        frequency: CONFIG.animation.frequency,
+                        speed: CONFIG.animation.speed,
+                        noiseScale: CONFIG.animation.noiseScale,
+                        smoothing: CONFIG.animation.smoothing,
+                        autoRotate: CONFIG.animation.autoRotate,
+                        autoRotateSpeed: CONFIG.animation.autoRotateSpeed
+                    };
+
+                    animFolder.add(animParams, 'amplitude', 0.0, 0.2).name('Amplitude').onChange(v => {
+                        CONFIG.animation.amplitude = v;
+                    });
+                    animFolder.add(animParams, 'frequency', 0.0001, 0.001).name('Frequency').onChange(v => {
+                        CONFIG.animation.frequency = v;
+                    });
+                    animFolder.add(animParams, 'speed', 0.1, 3.0).name('Speed').onChange(v => {
+                        CONFIG.animation.speed = v;
+                    });
+                    animFolder.add(animParams, 'noiseScale', 0.2, 2.0).name('Noise Scale').onChange(v => {
+                        CONFIG.animation.noiseScale = v;
+                    });
+                    animFolder.add(animParams, 'smoothing', 0.8, 0.99).name('Smoothing').onChange(v => {
+                        CONFIG.animation.smoothing = v;
+                    });
+                    animFolder.add(animParams, 'autoRotate').name('Auto Rotate').onChange(v => {
+                        CONFIG.animation.autoRotate = v;
+                        controls.autoRotate = v;
+                    });
+                    animFolder.add(animParams, 'autoRotateSpeed', 0.0, 2.0).name('Rotation Speed').onChange(v => {
+                        CONFIG.animation.autoRotateSpeed = v;
+                        controls.autoRotateSpeed = v;
+                    });
+
+                    const postFolder = gui.addFolder('Post-Process');
+                    const postParams = {
+                        rgbShift: CONFIG.postProcess.rgbShift,
+                        blur: CONFIG.postProcess.blur,
+                        gloss: CONFIG.postProcess.gloss,
+                        vignette: CONFIG.postProcess.vignette,
+                        scanlines: CONFIG.postProcess.scanlines,
+                        noise: CONFIG.postProcess.noise,
+                        enabled: CONFIG.postProcess.enabled,
+                        mix: CONFIG.postProcess.mix
+                    };
+
+                    postFolder.add(postParams, 'rgbShift', 0.0, 0.005).name('RGB Shift').onChange(v => {
+                        rgbShiftShader.uniforms.shift.value = v;
+                    });
+                    postFolder.add(postParams, 'blur', 0.0, 0.01).name('Blur').onChange(v => {
+                        blurShader.uniforms.blur.value = v;
+                    });
+                    postFolder.add(postParams, 'gloss', 0.0, 1.0).name('Gloss').onChange(v => {
+                        glossShader.uniforms.gloss.value = v;
+                    });
+                    postFolder.add(postParams, 'vignette', 0.0, 1.0).name('Vignette').onChange(v => {
+                        vignetteShader.uniforms.vignette.value = v;
+                    });
+                    postFolder.add(postParams, 'scanlines', 0.0, 0.5).name('Scanlines').onChange(v => {
+                        scanlinesShader.uniforms.scanlines.value = v;
+                    });
+                    postFolder.add(postParams, 'noise', 0.0, 0.2).name('Noise').onChange(v => {
+                        noiseShader.uniforms.noise.value = v;
+                    });
+                    postFolder.add(postParams, 'enabled').name('Enable Effects').onChange(v => {
+                        CONFIG.postProcess.enabled = v;
+                        rgbShiftPass.enabled = v;
+                        blurPass.enabled = v;
+                        glossPass.enabled = v;
+                        vignettePass.enabled = v;
+                        scanlinesPass.enabled = v;
+                        noisePass.enabled = v;
+                    });
+                    postFolder.add(postParams, 'mix', 0.0, 1.0).name('Mix').onChange(v => {
+                        CONFIG.postProcess.mix = v;
+                    });
+
+                    const camFolder = gui.addFolder('Camera');
+                    const camParams = {
+                        fov: CONFIG.camera.fov,
+                        pixelRatio: CONFIG.camera.pixelRatio
+                    };
+                    camFolder.add(camParams, 'fov', 30, 90).name('FOV').onChange(v => {
+                        CONFIG.camera.fov = v;
+                        camera.fov = v;
+                        camera.updateProjectionMatrix();
+                    });
+                    camFolder.add(camParams, 'pixelRatio', 0.5, 2.0).name('Pixel Ratio').onChange(v => {
+                        CONFIG.camera.pixelRatio = v;
+                        renderer.setPixelRatio(Math.min(window.devicePixelRatio, v));
+                    });
+                    const resetBtn = { reset: () => {
+                        Object.assign(CONFIG, JSON.parse(JSON.stringify(originalConfig)));
+                        sphereParams.radius = CONFIG.sphere.radius;
+                        sphereParams.latitudeSegments = CONFIG.sphere.latitudeSegments;
+                        sphereParams.longitudeSegments = CONFIG.sphere.longitudeSegments;
+                        sphereParams.rectWidth = CONFIG.sphere.rectWidth;
+                        sphereParams.rectHeight = CONFIG.sphere.rectHeight;
+                        sphereParams.gap = CONFIG.sphere.gap;
+                        sphereParams.displacement = CONFIG.sphere.displacement;
+                        animParams.amplitude = CONFIG.animation.amplitude;
+                        animParams.frequency = CONFIG.animation.frequency;
+                        animParams.speed = CONFIG.animation.speed;
+                        animParams.noiseScale = CONFIG.animation.noiseScale;
+                        animParams.smoothing = CONFIG.animation.smoothing;
+                        animParams.autoRotate = CONFIG.animation.autoRotate;
+                        animParams.autoRotateSpeed = CONFIG.animation.autoRotateSpeed;
+                        postParams.rgbShift = CONFIG.postProcess.rgbShift;
+                        postParams.blur = CONFIG.postProcess.blur;
+                        postParams.gloss = CONFIG.postProcess.gloss;
+                        postParams.vignette = CONFIG.postProcess.vignette;
+                        postParams.scanlines = CONFIG.postProcess.scanlines;
+                        postParams.noise = CONFIG.postProcess.noise;
+                        postParams.enabled = CONFIG.postProcess.enabled;
+                        postParams.mix = CONFIG.postProcess.mix;
+                        camParams.fov = CONFIG.camera.fov;
+                        camParams.pixelRatio = CONFIG.camera.pixelRatio;
+                        createSphereRectangles();
+                    }};
+                    camFolder.add(resetBtn, 'reset').name('Reset Defaults');
+                }
+            }).catch(err => console.error('Failed to load lil-gui:', err));
+        }
+
+        initGUI();
+
+        // ==========================
+        // ANIMATION
+        // ==========================
+        const noiseOffset = new Float32Array(sphereRects.length);
+        sphereRects.forEach((_, i) => {
+            noiseOffset[i] = Math.random() * 1000;
+        });
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const dt = clock.getDelta();
+            const time = clock.getElapsedTime();
+
+            // Auto rotate
+            if (controls.autoRotate) {
+                controls.autoRotateSpeed = CONFIG.animation.autoRotateSpeed;
+                controls.update();
+            }
+
+            // Animate rectangles
+            sphereRects.forEach((rect, i) => {
+                const offset = noiseOffset[i];
+                const noise = Math.sin(time * CONFIG.animation.frequency * 60 + offset) *
+                              Math.sin(time * CONFIG.animation.frequency * 42 + offset * 1.5) *
+                              Math.cos(time * CONFIG.animation.frequency * 23 + offset * 2.3);
+                const displacement = noise * CONFIG.animation.amplitude * CONFIG.animation.smoothing;
+
+                const newPos = rect.userData.basePosition.clone()
+                    .add(rect.userData.basePosition.clone().normalize().multiplyScalar(displacement))
+                    .clampLength(
+                        CONFIG.sphere.radius - CONFIG.sphere.displacement,
+                        CONFIG.sphere.radius + CONFIG.sphere.displacement
+                    );
+
+                rect.position.copy(newPos);
+            });
+
+            controls.update();
+
+            if (CONFIG.postProcess.enabled) {
+                effectComposer.render();
+            } else {
+                renderer.render(scene, camera);
+            }
+        }
+
+        animate();
+
+        // ==========================
+        // EVENTS
+        // ==========================
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, CONFIG.camera.pixelRatio));
+            effectComposer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'd' || e.key === 'D') {
+                guiVisible = !guiVisible;
+                if (gui) {
+                    gui.domElement.style.display = guiVisible ? 'block' : 'none';
+                }
+            }
+        });
+    </script>
+</body>
+</html>

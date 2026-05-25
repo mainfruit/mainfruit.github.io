@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Liquid Sphere</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+        }
+        canvas {
+            display: block;
+        }
+        #debug-ui {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 12px;
+            display: none;
+            z-index: 100;
+        }
+        #debug-ui h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        .control-group h4 {
+            margin-top: 0;
+            margin-bottom: 5px;
+        }
+        .control-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        .control-row label {
+            width: 150px;
+            display: inline-block;
+        }
+        .control-row input {
+            width: 100px;
+            margin-right: 5px;
+        }
+        .control-row button {
+            margin-right: 5px;
+        }
+        #reset-btn {
+            margin-top: 10px;
+            padding: 5px 10px;
+        }
+    </style>
+</head>
+<body>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+            }
+        }
+    </script>
+    <div id="debug-ui">
+        <h3>Debug UI</h3>
+        <div class="control-group">
+            <h4>Sphere Layout</h4>
+            <div class="control-row">
+                <label for="radius">Radius:</label>
+                <input type="range" id="radius" min="50" max="200" value="100">
+                <span id="radius-value">100</span>
+            </div>
+            <div class="control-row">
+                <label for="density">Density:</label>
+                <input type="range" id="density" min="5" max="50" value="20">
+                <span id="density-value">20</span>
+            </div>
+            <div class="control-row">
+                <label for="rect-width">Rect Width:</label>
+                <input type="range" id="rect-width" min="1" max="20" value="5">
+                <span id="rect-width-value">5</span>
+            </div>
+            <div class="control-row">
+                <label for="rect-height">Rect Height:</label>
+                <input type="range" id="rect-height" min="1" max="20" value="2">
+                <span id="rect-height-value">2</span>
+            </div>
+            <div class="control-row">
+                <label for="gap">Gap:</label>
+                <input type="range" id="gap" min="0" max="10" value="1">
+                <span id="gap-value">1</span>
+            </div>
+        </div>
+        <div class="control-group">
+            <h4>Animation</h4>
+            <div class="control-row">
+                <label for="amplitude">Amplitude:</label>
+                <input type="range" id="amplitude" min="0" max="10" value="2">
+                <span id="amplitude-value">2</span>
+            </div>
+            <div class="control-row">
+                <label for="frequency">Frequency:</label>
+                <input type="range" id="frequency" min="0" max="1" value="0.5">
+                <span id="frequency-value">0.5</span>
+            </div>
+            <div class="control-row">
+                <label for="speed">Speed:</label>
+                <input type="range" id="speed" min="0" max="1" value="0.5">
+                <span id="speed-value">0.5</span>
+            </div>
+            <div class="control-row">
+                <label for="coherence">Coherence:</label>
+                <input type="range" id="coherence" min="0" max="1" value="0.5">
+                <span id="coherence-value">0.5</span>
+            </div>
+            <div class="control-row">
+                <label for="auto-rotate">Auto Rotate:</label>
+                <input type="checkbox" id="auto-rotate">
+            </div>
+        </div>
+        <div class="control-group">
+            <h4>Post Effects</h4>
+            <div class="control-row">
+                <label for="rgb-shift">RGB Shift:</label>
+                <input type="range" id="rgb-shift" min="0" max="0.05" step="0.001" value="0.01">
+                <span id="rgb-shift-value">0.01</span>
+            </div>
+            <div class="control-row">
+                <label for="blur">Blur:</label>
+                <input type="range" id="blur" min="0" max="10" value="2">
+                <span id="blur-value">2</span>
+            </div>
+            <div class="control-row">
+                <label for="gloss">Gloss:</label>
+                <input type="range" id="gloss" min="0" max="5" value="1">
+                <span id="gloss-value">1</span>
+            </div>
+            <div class="control-row">
+                <label for="vignette">Vignette:</label>
+                <input type="range" id="vignette" min="0" max="1" value="0.5">
+                <span id="vignette-value">0.5</span>
+            </div>
+            <div class="control-row">
+                <label for="scanline">Scanline:</label>
+                <input type="range" id="scanline" min="0" max="1" value="0.5">
+                <span id="scanline-value">0.5</span>
+            </div>
+        </div>
+        <div class="control-group">
+            <h4>Camera/Render</h4>
+            <div class="control-row">
+                <label for="fov">FOV:</label>
+                <input type="range" id="fov" min="20" max="100" value="60">
+                <span id="fov-value">60</span>
+            </div>
+            <div class="control-row">
+                <label for="pixel-ratio">Pixel Ratio:</label>
+                <input type="range" id="pixel-ratio" min="1" max="3" value="1.5">
+                <span id="pixel-ratio-value">1.5</span>
+            </div>
+        </div>
+        <button id="reset-btn">Reset to Defaults</button>
+    </div>
+    <script type="module">
+        // Import Three.js and required modules
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { RGBShiftShader } from 'three/addons/shaders/RGBShiftShader.js';
+        import { CopyShader } from 'three/addons/shaders/CopyShader.js';
+
+        // Configuration
+        const config = {
+            sphere: {
+                radius: 100,
+                density: 20,
+                rectWidth: 5,
+                rectHeight: 2,
+                gap: 1,
+                shellDepth: 10
+            },
+            animation: {
+                amplitude: 2,
+                frequency: 0.5,
+                speed: 0.5,
+                coherence: 0.5,
+                autoRotate: false,
+                autoRotateSpeed: 0.005
+            },
+            postProcessing: {
+                rgbShift: 0.01,
+                blur: 2,
+                gloss: 1,
+                vignette: 0.5,
+                scanline: 0.5,
+                enableEffects: true
+            },
+            camera: {
+                fov: 60,
+                near: 0.1,
+                far: 1000,
+                distance: 300
+            },
+            render: {
+                pixelRatio: 1.5,
+                background: 0x000000
+            }
+        };
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(config.render.background);
+
+        const camera = new THREE.PerspectiveCamera(
+            config.camera.fov,
+            window.innerWidth / window.innerHeight,
+            config.camera.near,
+            config.camera.far
+        );
+        camera.position.z = config.camera.distance;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, config.render.pixelRatio));
+        document.body.appendChild(renderer.domElement);
+
+        // OrbitControls
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.screenSpacePanning = false;
+        controls.minDistance = 150;
+        controls.maxDistance = 500;
+
+        // Create sphere rectangles
+        const rectangles = [];
+        const rectGeometry = new THREE.PlaneGeometry(1, 1);
+        const rectMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xffffff,
+            side: THREE.DoubleSide
+        });
+
+        // Generate sphere rectangles
+        function generateSphereRectangles() {
+            // Clear existing rectangles
+            rectangles.forEach(rect => scene.remove(rect));
+            rectangles.length = 0;
+
+            const { radius, density, rectWidth, rectHeight, gap } = config.sphere;
+            const totalRectangles = Math.floor(4 * Math.PI * density * density);
+            
+            // Create a sphere with rectangles
+            for (let i = 0; i < totalRectangles; i++) {
+                // Use Fibonacci sphere algorithm for even distribution
+                const y = 1 - (i / (totalRectangles - 1)) * 2; // y goes from 1 to -1
+                const radiusAtY = Math.sqrt(1 - y * y);
+                const theta = Math.acos(y);
+                const phi = Math.sqrt(totalRectangles * Math.PI) * theta;
+
+                // Position on sphere
+                const x = radiusAtY * Math.cos(phi);
+                const z = radiusAtY * Math.sin(phi);
+
+                // Create rectangle
+                const rect = new THREE.Mesh(rectGeometry, rectMaterial);
+                rect.position.set(x * radius, y * radius, z * radius);
+                
+                // Orient rectangle to face sphere surface
+                rect.lookAt(0, 0, 0);
+                rect.rotateY(Math.PI / 2);
+
+                // Scale rectangle
+                rect.scale.set(rectWidth, rectHeight, 1);
+
+                // Add to scene and array
+                scene.add(rect);
+                rectangles.push(rect);
+            }
+        }
+
+        // Animation variables
+        let time = 0;
+        const noiseScale = 0.01;
+        const coherence = 0.5;
+
+        // Animation function
+        function animate() {
+            time += 0.01 * config.animation.speed;
+            
+            // Update rectangles with organic motion
+            rectangles.forEach((rect, i) => {
+                const t = time + i * 0.01 * coherence;
+                const amplitude = config.animation.amplitude;
+                const frequency = config.animation.frequency;
+
+                // Get position for noise
+                const pos = rect.position.clone();
+                pos.normalize();
+
+                // Calculate noise displacement
+                const displacement = new THREE.Vector3(
+                    Math.sin(pos.x * noiseScale + t) * amplitude,
+                    Math.sin(pos.y * noiseScale + t) * amplitude,
+                    Math.sin(pos.z * noiseScale + t) * amplitude
+                );
+
+                // Apply displacement with smooth motion
+                rect.position.add(displacement);
+                
+                // Return to sphere surface
+                rect.position.normalize().multiplyScalar(config.sphere.radius);
+
+                // Rotate rectangles slightly for visual interest
+                rect.rotateX(0.001);
+                rect.rotateY(0.001);
+            });
+
+            // Auto rotation
+            if (config.animation.autoRotate) {
+                scene.rotation.y += config.animation.autoRotateSpeed;
+            }
+
+            // Update controls
+            controls.update();
+
+            // Render scene
+            renderer.render(scene, camera);
+
+            requestAnimationFrame(animate);
+        }
+
+        // Handle window resize
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, config.render.pixelRatio));
+        }
+
+        window.addEventListener('resize', onWindowResize);
+
+        // Keyboard controls
+        function onKeyDown(event) {
+            if (event.key === 'd' || event.key === 'D') {
+                const debugUI = document.getElementById('debug-ui');
+                debugUI.style.display = debugUI.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+
+        window.addEventListener('keydown', onKeyDown);
+
+        // Initialize and start animation
+        generateSphereRectangles();
+        animate();
+
+        // Setup post-processing
+        let composer;
+        let rgbShiftPass;
+        let bloomPass;
+        let renderPass;
+        let copyPass;
+        
+        function initPostProcessing() {
+            // Create the composer
+            composer = new EffectComposer(renderer);
+            
+            // Create render pass
+            renderPass = new RenderPass(scene, camera);
+            composer.addPass(renderPass);
+            
+            // Create RGB shift pass
+            rgbShiftPass = new ShaderPass(RGBShiftShader);
+            rgbShiftPass.uniforms['amount'].value = config.postProcessing.rgbShift;
+            composer.addPass(rgbShiftPass);
+            
+            // Create bloom pass
+            bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                config.postProcessing.gloss,
+                config.postProcessing.blur,
+                0.1
+            );
+            composer.addPass(bloomPass);
+            
+            // Create copy pass to output to screen
+            copyPass = new ShaderPass(CopyShader);
+            copyPass.renderToScreen = true;
+            composer.addPass(copyPass);
+        }
+        
+        // Update post-processing effects
+        function updatePostProcessing() {
+            if (!composer) return;
+            
+            rgbShiftPass.uniforms['amount'].value = config.postProcessing.rgbShift;
+            bloomPass.strength = config.postProcessing.gloss;
+            bloomPass.radius = config.postProcessing.blur;
+        }
+        
+        // Handle window resize for post-processing
+        function onWindowResizePost() {
+            // Update camera aspect ratio
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            
+            // Update renderer size
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, config.render.pixelRatio));
+            
+            // Update composer size
+            if (composer) {
+                composer.setSize(window.innerWidth, window.innerHeight);
+            }
+        }
+        
+        // Add resize event listener for post-processing
+        window.addEventListener('resize', onWindowResizePost);
+        
+        // Initialize post-processing after first render
+        setTimeout(() => {
+            initPostProcessing();
+            updatePostProcessing();
+        }, 100);
+
+        // Animation loop with post-processing
+        function animateWithEffects() {
+            time += 0.01 * config.animation.speed;
+            
+            // Update rectangles with organic motion
+            rectangles.forEach((rect, i) => {
+                const t = time + i * 0.01 * coherence;
+                const amplitude = config.animation.amplitude;
+                const frequency = config.animation.frequency;
+
+                // Get position for noise
+                const pos = rect.position.clone();
+                pos.normalize();
+
+                // Calculate noise displacement
+                const displacement = new THREE.Vector3(
+                    Math.sin(pos.x * noiseScale + t) * amplitude,
+                    Math.sin(pos.y * noiseScale + t) * amplitude,
+                    Math.sin(pos.z * noiseScale + t) * amplitude
+                );
+
+                // Apply displacement with smooth motion
+                rect.position.add(displacement);
+                
+                // Return to sphere surface
+                rect.position.normalize().multiplyScalar(config.sphere.radius);
+
+                // Rotate rectangles slightly for visual interest
+                rect.rotateX(0.001);
+                rect.rotateY(0.001);
+            });
+
+            // Auto rotation
+            if (config.animation.autoRotate) {
+                scene.rotation.y += config.animation.autoRotateSpeed;
+            }
+
+            // Update controls
+            controls.update();
+            
+            // Update post-processing effects
+            updatePostProcessing();
+
+            // Render with composer if available
+            if (composer) {
+                composer.render();
+            } else {
+                // Fallback to direct render if composer not ready
+                renderer.render(scene, camera);
+            }
+
+            requestAnimationFrame(animateWithEffects);
+        }
+
+        // Start animation with post-processing
+        animateWithEffects();
+
+        // Debug UI event listeners
+        function setupDebugUI() {
+            // Sphere layout controls
+            document.getElementById('radius').addEventListener('input', (e) => {
+                config.sphere.radius = parseInt(e.target.value);
+                document.getElementById('radius-value').textContent = config.sphere.radius;
+                generateSphereRectangles();
+            });
+
+            document.getElementById('density').addEventListener('input', (e) => {
+                config.sphere.density = parseInt(e.target.value);
+                document.getElementById('density-value').textContent = config.sphere.density;
+                generateSphereRectangles();
+            });
+
+            document.getElementById('rect-width').addEventListener('input', (e) => {
+                config.sphere.rectWidth = parseInt(e.target.value);
+                document.getElementById('rect-width-value').textContent = config.sphere.rectWidth;
+                generateSphereRectangles();
+            });
+
+            document.getElementById('rect-height').addEventListener('input', (e) => {
+                config.sphere.rectHeight = parseInt(e.target.value);
+                document.getElementById('rect-height-value').textContent = config.sphere.rectHeight;
+                generateSphereRectangles();
+            });
+
+            document.getElementById('gap').addEventListener('input', (e) => {
+                config.sphere.gap = parseInt(e.target.value);
+                document.getElementById('gap-value').textContent = config.sphere.gap;
+                generateSphereRectangles();
+            });
+
+            // Animation controls
+            document.getElementById('amplitude').addEventListener('input', (e) => {
+                config.animation.amplitude = parseFloat(e.target.value);
+                document.getElementById('amplitude-value').textContent = config.animation.amplitude;
+            });
+
+            document.getElementById('frequency').addEventListener('input', (e) => {
+                config.animation.frequency = parseFloat(e.target.value);
+                document.getElementById('frequency-value').textContent = config.animation.frequency;
+            });
+
+            document.getElementById('speed').addEventListener('input', (e) => {
+                config.animation.speed = parseFloat(e.target.value);
+                document.getElementById('speed-value').textContent = config.animation.speed;
+            });
+
+            document.getElementById('coherence').addEventListener('input', (e) => {
+                config.animation.coherence = parseFloat(e.target.value);
+                document.getElementById('coherence-value').textContent = config.animation.coherence;
+            });
+
+            document.getElementById('auto-rotate').addEventListener('change', (e) => {
+                config.animation.autoRotate = e.target.checked;
+            });
+
+            // Post processing controls
+            document.getElementById('rgb-shift').addEventListener('input', (e) => {
+                config.postProcessing.rgbShift = parseFloat(e.target.value);
+                document.getElementById('rgb-shift-value').textContent = config.postProcessing.rgbShift;
+                updatePostProcessing();
+            });
+
+            document.getElementById('blur').addEventListener('input', (e) => {
+                config.postProcessing.blur = parseFloat(e.target.value);
+                document.getElementById('blur-value').textContent = config.postProcessing.blur;
+                updatePostProcessing();
+            });
+
+            document.getElementById('gloss').addEventListener('input', (e) => {
+                config.postProcessing.gloss = parseFloat(e.target.value);
+                document.getElementById('gloss-value').textContent = config.postProcessing.gloss;
+                updatePostProcessing();
+            });
+
+            document.getElementById('vignette').addEventListener('input', (e) => {
+                config.postProcessing.vignette = parseFloat(e.target.value);
+                document.getElementById('vignette-value').textContent = config.postProcessing.vignette;
+                // Note: vignette is not directly supported in this implementation
+            });
+
+            document.getElementById('scanline').addEventListener('input', (e) => {
+                config.postProcessing.scanline = parseFloat(e.target.value);
+                document.getElementById('scanline-value').textContent = config.postProcessing.scanline;
+                // Note: scanline is not directly supported in this implementation
+            });
+
+            // Camera/render controls
+            document.getElementById('fov').addEventListener('input', (e) => {
+                config.camera.fov = parseInt(e.target.value);
+                camera.fov = config.camera.fov;
+                camera.updateProjectionMatrix();
+                document.getElementById('fov-value').textContent = config.camera.fov;
+            });
+
+            document.getElementById('pixel-ratio').addEventListener('input', (e) => {
+                config.render.pixelRatio = parseFloat(e.target.value);
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, config.render.pixelRatio));
+                document.getElementById('pixel-ratio-value').textContent = config.render.pixelRatio;
+            });
+
+            // Reset button
+            document.getElementById('reset-btn').addEventListener('click', () => {
+                // Reset to default values
+                config.sphere.radius = 100;
+                config.sphere.density = 20;
+                config.sphere.rectWidth = 5;
+                config.sphere.rectHeight = 2;
+                config.sphere.gap = 1;
+
+                config.animation.amplitude = 2;
+                config.animation.frequency = 0.5;
+                config.animation.speed = 0.5;
+                config.animation.coherence = 0.5;
+                config.animation.autoRotate = false;
+
+                config.postProcessing.rgbShift = 0.01;
+                config.postProcessing.blur = 2;
+                config.postProcessing.gloss = 1;
+                config.postProcessing.vignette = 0.5;
+                config.postProcessing.scanline = 0.5;
+
+                config.camera.fov = 60;
+                config.camera.distance = 300;
+                camera.position.z = config.camera.distance;
+                camera.fov = config.camera.fov;
+                camera.updateProjectionMatrix();
+
+                config.render.pixelRatio = 1.5;
+
+                // Update UI
+                document.getElementById('radius').value = config.sphere.radius;
+                document.getElementById('radius-value').textContent = config.sphere.radius;
+                document.getElementById('density').value = config.sphere.density;
+                document.getElementById('density-value').textContent = config.sphere.density;
+                document.getElementById('rect-width').value = config.sphere.rectWidth;
+                document.getElementById('rect-width-value').textContent = config.sphere.rectWidth;
+                document.getElementById('rect-height').value = config.sphere.rectHeight;
+                document.getElementById('rect-height-value').textContent = config.sphere.rectHeight;
+                document.getElementById('gap').value = config.sphere.gap;
+                document.getElementById('gap-value').textContent = config.sphere.gap;
+
+                document.getElementById('amplitude').value = config.animation.amplitude;
+                document.getElementById('amplitude-value').textContent = config.animation.amplitude;
+                document.getElementById('frequency').value = config.animation.frequency;
+                document.getElementById('frequency-value').textContent = config.animation.frequency;
+                document.getElementById('speed').value = config.animation.speed;
+                document.getElementById('speed-value').textContent = config.animation.speed;
+                document.getElementById('coherence').value = config.animation.coherence;
+                document.getElementById('coherence-value').textContent = config.animation.coherence;
+                document.getElementById('auto-rotate').checked = config.animation.autoRotate;
+
+                document.getElementById('rgb-shift').value = config.postProcessing.rgbShift;
+                document.getElementById('rgb-shift-value').textContent = config.postProcessing.rgbShift;
+                document.getElementById('blur').value = config.postProcessing.blur;
+                document.getElementById('blur-value').textContent = config.postProcessing.blur;
+                document.getElementById('gloss').value = config.postProcessing.gloss;
+                document.getElementById('gloss-value').textContent = config.postProcessing.gloss;
+                document.getElementById('vignette').value = config.postProcessing.vignette;
+                document.getElementById('vignette-value').textContent = config.postProcessing.vignette;
+                document.getElementById('scanline').value = config.postProcessing.scanline;
+                document.getElementById('scanline-value').textContent = config.postProcessing.scanline;
+
+                document.getElementById('fov').value = config.camera.fov;
+                document.getElementById('fov-value').textContent = config.camera.fov;
+
+                document.getElementById('pixel-ratio').value = config.render.pixelRatio;
+                document.getElementById('pixel-ratio-value').textContent = config.render.pixelRatio;
+
+                // Regenerate rectangles
+                generateSphereRectangles();
+                
+                // Reset post-processing
+                updatePostProcessing();
+            });
+        }
+
+        // Initialize debug UI
+        setupDebugUI();
+
+    </script>
+</body>
+</html>

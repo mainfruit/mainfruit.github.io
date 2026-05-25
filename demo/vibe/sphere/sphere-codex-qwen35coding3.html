@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>3D Sphere with Lava Surface</title>
+<style>
+body { margin: 0; overflow: hidden; background: #000; }
+canvas { display: block; }
+#controls {
+position: absolute; top: 10px; left: 10px;
+background: rgba(0,0,0,0.85); padding: 15px;
+border-radius: 8px; color: white; font-family: sans-serif;
+min-width: 220px; z-index: 100;
+}
+.control-group { margin-bottom: 14px; }
+label { display: block; margin-bottom: 5px; font-size: 12px; }
+input[type="range"] { width: 100%; cursor: pointer; }
+span.value { font-size: 11px; color: #aaa; }
+</style>
+</head>
+<body>
+<div id="controls">
+<h3>Controls</h3>
+<div class="control-group">
+<label>Grid Size: <span id="gridSizeVal" class="value">32</span></label>
+<input type="range" id="gridSize" min="8" max="128" value="32">
+</div>
+<div class="control-group">
+<label>Lava Speed: <span id="lavaSpeedVal" class="value">0.3</span></label>
+<input type="range" id="lavaSpeed" min="0" max="2" step="0.1" value="0.3">
+</div>
+<div class="control-group">
+<label>Form (Sphere/Flat): <span id="formVal" class="value">0.7</span></label>
+<input type="range" id="form" min="0" max="1" step="0.01" value="0.7">
+</div>
+<div class="control-group">
+<label>Animation Intensity: <span id="animVal" class="value">0.5</span></label>
+<input type="range" id="animation" min="0" max="1" step="0.01" value="0.5">
+</div>
+<div class="control-group">
+<label>RGB Distortion: <span id="rgbDistVal" class="value">0.5</span></label>
+<input type="range" id="rgbDistortion" min="0" max="1" step="0.05" value="0.5">
+</div>
+<div class="control-group">
+<label>Blur Strength: <span id="blurVal" class="value">0.3</span></label>
+<input type="range" id="blurStrength" min="0" max="0.5" step="0.02" value="0.3">
+</div>
+</div>
+
+<script type="importmap">
+{
+"imports": {
+"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { RGBShiftShader } from 'three/addons/shaders/RGBShiftShader.js';
+
+// Scene
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
+// Camera
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.z = 3.0;
+
+// Renderer
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+// Secondary canvas for TV effect overlay
+const tvCanvas = document.createElement('canvas');
+tvCanvas.style.position = 'absolute';
+tvCanvas.style.top = '0';
+tvCanvas.style.left = '0';
+tvCanvas.style.pointerEvents = 'none';
+tvCanvas.style.zIndex = '1';
+document.body.appendChild(tvCanvas);
+const tvCtx = tvCanvas.getContext('2d');
+
+// Sphere geometry with proper UV mapping
+const sphereRadius = 1.0;
+const sphereGeo = new THREE.IcosahedronGeometry(sphereRadius, 64);
+
+const posAttr = sphereGeo.attributes.position;
+const uvAttr = [];
+for (let i = 0; i < posAttr.count; i++) {
+const x = posAttr.getX(i);
+const y = posAttr.getY(i);
+const z = posAttr.getZ(i);
+const theta = Math.acos(Math.max(-1, Math.min(1, y / sphereRadius)));
+const phi = Math.atan2(z, x);
+uvAttr.push((phi + Math.PI) / (2 * Math.PI));
+uvAttr.push(theta / Math.PI);
+}
+sphereGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvAttr, 2));
+
+// Vertex shader
+const vertexShader = `
+uniform float time;
+uniform float gridSize;
+uniform float sphereForm;
+uniform float animationIntensity;
+
+varying vec2 vUv;
+varying vec3 vNormal;
+
+const float SPHERE_RADIUS = 1.0;
+
+void main() {
+vUv = uv;
+vNormal = normal;
+
+vec3 worldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+
+float sphereEffect = smoothstep(0.0, 1.0, sphereForm);
+vec3 dir = normalize(position);
+float len = length(position);
+vec3 newPos = dir * (SPHERE_RADIUS * (1.0 - sphereEffect) + len * sphereEffect);
+
+vec2 uv2 = worldPos.xy * 2.0 + vec2(time * animationIntensity * 0.5, 0.0);
+float n = sin(uv2.x) * sin(uv2.y) * 0.5 + 0.5;
+float displacement = n * 0.15 * animationIntensity;
+
+newPos = newPos + dir * displacement;
+gl_Position = projectionMatrix * viewMatrix * vec4(newPos, 1.0);
+}
+`;
+
+// Fragment shader - brighter with visible grid
+const fragmentShader = `
+uniform float time;
+uniform float gridSize;
+uniform float animationIntensity;
+
+varying vec2 vUv;
+varying vec3 vNormal;
+
+void main() {
+// Bright grid pattern
+float gridSpacing = 1.0 / gridSize;
+vec2 gridUV = vUv * gridSize;
+
+vec2 gridLines = fract(gridUV);
+float lineWidth = 0.015;
+float gridX = step(1.0 - lineWidth, gridLines.x) * step(1.0 - lineWidth, 1.0 - gridLines.x);
+float gridY = step(1.0 - lineWidth, gridLines.y) * step(1.0 - lineWidth, 1.0 - gridLines.y);
+float grid = gridX * gridY;
+
+// Bright base color
+vec3 baseColor = vec3(0.05, 0.05, 0.08);
+
+// Animated lava pattern - brighter
+vec2 uv = vUv * (gridSize * 0.5);
+float n = sin(uv.x * 5.0 + time * 0.3) * sin(uv.y * 5.0 + time * 0.3);
+float lava = clamp(n * 0.5 + 0.5, 0.0, 1.0);
+
+// Brighter colors
+vec3 color1 = vec3(0.1, 0.1, 0.2);
+vec3 color2 = vec3(0.2, 0.2, 0.5);
+vec3 color3 = vec3(0.5, 0.2, 0.4);
+
+vec3 lavaColor = mix(color1, color2, sin(time * 0.2 + vUv.x * 10.0) * 0.5 + 0.5);
+lavaColor = mix(lavaColor, color3, sin(time * 0.2 + vUv.y * 10.0) * 0.5 + 0.5);
+
+// Blend
+vec3 finalColor = mix(baseColor, lavaColor, lava * 0.8);
+
+// Brighter white grid lines - more visible
+finalColor = mix(finalColor, vec3(1.0), grid * 0.5);
+
+gl_FragColor = vec4(finalColor, 1.0);
+}
+`;
+
+// Material
+const material = new THREE.ShaderMaterial({
+uniforms: {
+time: { value: 0 },
+gridSize: { value: 32 },
+sphereForm: { value: 0.7 },
+animationIntensity: { value: 0.5 }
+},
+vertexShader: vertexShader,
+fragmentShader: fragmentShader,
+side: THREE.FrontSide
+});
+
+const sphere = new THREE.Mesh(sphereGeo, material);
+scene.add(sphere);
+
+// Controls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.5;
+
+// TV Effect shader
+const tvEffectShader = {
+uniforms: {
+tDiffuse: { value: null },
+distortion: { value: 0.5 },
+blur: { value: 0.3 },
+time: { value: 0 }
+},
+vertexShader: `
+varying vec2 vUv;
+void main() {
+vUv = uv;
+gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`,
+fragmentShader: `
+uniform float time;
+uniform float distortion;
+uniform sampler2D tDiffuse;
+varying vec2 vUv;
+
+void main() {
+vec2 uv = vUv;
+
+float scanline = sin(uv.y * 200.0 + time * 5.0) * 0.002;
+uv.y += scanline;
+
+float shift = distortion * 0.015 * sin(time * 2.0 + uv.x * 10.0);
+
+float r = texture2D(tDiffuse, uv + vec2(shift, 0.0)).r;
+float g = texture2D(tDiffuse, uv + vec2(0.0, 0.0)).g;
+float b = texture2D(tDiffuse, uv - vec2(shift, 0.0)).b;
+
+gl_FragColor = vec4(r, g, b, 1.0);
+}
+`
+};
+
+// Post-processing
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+
+const rgbShiftPass = new ShaderPass(RGBShiftShader);
+rgbShiftPass.uniforms.amount.value = 0.005;
+composer.addPass(rgbShiftPass);
+
+const tvEffectPass = new ShaderPass(tvEffectShader);
+composer.addPass(tvEffectPass);
+
+// Resize
+window.addEventListener('resize', () => {
+const w = window.innerWidth;
+const h = window.innerHeight;
+camera.aspect = w / h;
+camera.updateProjectionMatrix();
+renderer.setSize(w, h);
+tvCanvas.width = w;
+tvCanvas.height = h;
+composer.setSize(w, h);
+});
+
+// Animation
+const clock = new THREE.Clock();
+
+function animate() {
+requestAnimationFrame(animate);
+const time = clock.getElapsedTime();
+
+material.uniforms.time.value = time;
+tvEffectShader.uniforms.time.value = time;
+
+controls.update();
+
+composer.render();
+
+tvCtx.clearRect(0, 0, tvCanvas.width, tvCanvas.height);
+tvCtx.drawImage(renderer.domElement, 0, 0);
+}
+
+// UI handlers
+document.getElementById('gridSize').addEventListener('input', (e) => {
+const val = parseInt(e.target.value);
+document.getElementById('gridSizeVal').textContent = val;
+material.uniforms.gridSize.value = val;
+});
+
+document.getElementById('lavaSpeed').addEventListener('input', (e) => {
+document.getElementById('lavaSpeedVal').textContent = parseFloat(e.target.value).toFixed(1);
+material.uniforms.animationIntensity.value = parseFloat(e.target.value) * 0.5;
+});
+
+document.getElementById('form').addEventListener('input', (e) => {
+const val = parseFloat(e.target.value);
+document.getElementById('formVal').textContent = val.toFixed(2);
+material.uniforms.sphereForm.value = val;
+});
+
+document.getElementById('animation').addEventListener('input', (e) => {
+const val = parseFloat(e.target.value);
+document.getElementById('animVal').textContent = val.toFixed(2);
+material.uniforms.animationIntensity.value = val * 0.5;
+});
+
+document.getElementById('rgbDistortion').addEventListener('input', (e) => {
+const val = parseFloat(e.target.value);
+document.getElementById('rgbDistVal').textContent = val.toFixed(2);
+rgbShiftPass.uniforms.amount.value = val * 0.02;
+});
+
+document.getElementById('blurStrength').addEventListener('input', (e) => {
+const val = parseFloat(e.target.value);
+document.getElementById('blurVal').textContent = val.toFixed(2);
+tvCanvas.style.filter = `blur(${val * 8}px)`;
+});
+
+animate();
+</script>
+</body>
+</html>

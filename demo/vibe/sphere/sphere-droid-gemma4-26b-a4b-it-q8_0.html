@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Wireframe Lava Sphere</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+        }
+        canvas {
+            display: block;
+        }
+        #gui-container {
+            position: absolute;
+            top: 0;
+            right: 0;
+            z-index: 100;
+        }
+    </style>
+    <!-- Import Map for ES Modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.167.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.167.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="gui-container"></div>
+
+    <!-- Debug UI (lil-gui) -->
+    <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.umd.min.js"></script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+        import { RGBShiftShader } from 'three/addons/shaders/RGBShiftShader.js';
+        import { FilmShader } from 'three/addons/shaders/FilmShader.js';
+
+        /**
+         * GLSL Noise Implementation (Simplex-like)
+         */
+        const vertexShader = `
+            uniform float uTime;
+            uniform float uAmplitude;
+            uniform float uScale;
+            varying vec3 vNormal;
+            varying vec3 vPosition;
+
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+            float snoise(vec3 v) {
+                const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+                const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+                vec3 i  = floor(v + dot(v, C.yyy));
+                vec3 x0 = v - i + dot(i, C.xxx);
+                vec3 g = step(x0.yzx, x0.xyz);
+                vec3 l = 1.0 - g;
+                vec3 i1 = min(g.xyz, l.zxy);
+                vec3 i2 = max(g.xyz, l.zxy);
+                vec3 x1 = x0 - i1 + C.xxx;
+                vec3 x2 = x0 - i2 + C.yyy;
+                vec3 x3 = x0 - D.yyy;
+                i = mod289(i);
+                vec4 p = permute(permute(permute(
+                            i.z + vec4(0.0, i1.z, i2.z, 1.0))
+                        + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+                        + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+                float n_ = 0.142857142857;
+                vec3 ns = n_ * D.wyz - D.xzx;
+                vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+                vec4 x_ = floor(j * ns.z);
+                vec4 y_ = floor(j - 7.0 * x_);
+                vec4 x = x_ * ns.x + ns.yyyy;
+                vec4 y = y_ * ns.x + ns.yyyy;
+                vec4 h = 1.0 - abs(x) - abs(y);
+                vec4 b0 = vec4(x.xy, y.xy);
+                vec4 b1 = vec4(x.zw, y.zw);
+                vec4 s0 = floor(b0) * 2.0 + 1.0;
+                vec4 s1 = floor(b1) * 2.0 + 1.0;
+                vec4 sh = -step(h, vec4(0.0));
+                vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+                vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+                vec3 p0 = vec3(a0.xy, h.xxyy);
+                vec3 p1 = vec3(a0.zw, h.zzww);
+                vec3 p2 = vec3(a1.xy, h.xxzz);
+                vec3 p3 = vec3(a1.zw, h.zzww);
+                vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+                p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+                vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+                m = m * m;
+                return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+            }
+
+            void main() {
+                vNormal = normal;
+                float noise = snoise(position * uScale + uTime);
+                vec3 newPosition = position + normal * noise * uAmplitude;
+                vPosition = newPosition;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
+            }
+        `;
+
+        const fragmentShader = `
+            varying vec3 vNormal;
+            varying vec3 vPosition;
+            void main() {
+                gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+            }
+        `;
+
+        // Custom Scanline Shader
+        const scanlineVertexShader = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `;
+
+        const scanlineFragmentShader = `
+            uniform sampler2D tDiffuse;
+            uniform float uIntensity;
+            uniform float uFrequency;
+            varying vec2 vUv;
+            void main() {
+                vec4 color = texture2D(tDiffuse, vUv);
+                float scanline = sin(vUv.y * uFrequency) * 0.5 + 0.5;
+                color.rgb -= scanline * uIntensity;
+                gl_FragColor = color;
+            }
+        `;
+
+        // --- Global Variables ---
+        let scene, camera, renderer, composer, controls, lineMesh, material;
+        let rgbShiftPass, filmPass, bloomPass, scanlinePass;
+        let gui;
+
+        // --- Settings Object ---
+        const settings = {
+            // Sphere / Noise
+            sphereRadius: 2.0,
+            sphereSegments: 64,
+            noiseAmplitude: 0.25,
+            noiseScale: 0.8,
+            noiseSpeed: 0.5,
+            
+            // Post FX
+            bloomStrength: 1.5,
+            bloomRadius: 0.4,
+            bloomThreshold: 0.1,
+            rgbShiftAmount: 0.003,
+            filmNoise: 0.5,
+            filmScanlineIntensity: 0.2,
+            filmScanlineFrequency: 400.0,
+            
+            // Misc
+            autoRotate: true,
+            autoRotateSpeed: 0.5
+        };
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 6;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // 1. Sphere Creation (Rectangle Grid)
+            rebuildSphere();
+
+            // 2. Controls Setup
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+
+            // 3. Postprocessing Setup
+            composer = new EffectComposer(renderer);
+            composer.addPass(new RenderPass(scene, camera));
+
+            bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight), 
+                settings.bloomStrength, 
+                settings.bloomRadius, 
+                settings.bloomThreshold
+            );
+            composer.addPass(bloomPass);
+
+            rgbShiftPass = new ShaderPass(RGBShiftShader);
+            if (rgbShiftPass.uniforms && rgbShiftPass.uniforms.amount) {
+                rgbShiftPass.uniforms.amount.value = settings.rgbShiftAmount;
+            }
+            composer.addPass(rgbShiftPass);
+
+            filmPass = new ShaderPass(FilmShader);
+            if (filmPass.uniforms && filmPass.uniforms.nIntensity) {
+                filmPass.uniforms.nIntensity.value = settings.filmNoise;
+            }
+            composer.addPass(filmPass);
+
+            // Custom Scanline Pass
+            scanlinePass = new ShaderPass({
+                uniforms: {
+                    'tDiffuse': { value: null },
+                    'uIntensity': { value: settings.filmScanlineIntensity },
+                    'uFrequency': { value: settings.filmScanlineFrequency }
+                },
+                vertexShader: scanlineVertexShader,
+                fragmentShader: scanlineFragmentShader
+            });
+            composer.addPass(scanlinePass);
+
+            // 4. Debug UI Setup
+            setupGUI();
+
+            // 5. Resize Handler
+            window.addEventListener('resize', onWindowResize);
+
+            // 6. Keyboard Handler
+            window.addEventListener('keydown', (e) => {
+                if (e.key.toLowerCase() === 'd') {
+                    const display = gui.domElement.style.display;
+                    gui.domElement.style.display = display === 'none' ? 'block' : 'none';
+                }
+            });
+
+            animate();
+        }
+
+        function rebuildSphere() {
+            if (lineMesh) {
+                scene.remove(lineMesh);
+                lineMesh.geometry.dispose();
+                material.dispose();
+            }
+
+            const segments = settings.sphereSegments;
+            const baseGeometry = new THREE.SphereGeometry(settings.sphereRadius, segments, segments);
+            const posAttr = baseGeometry.attributes.position;
+            const normAttr = baseGeometry.attributes.normal;
+
+            const linePositions = [];
+            const lineNormals = [];
+
+            // Helper to get data from base geometry
+            const getVertexData = (i, j) => {
+                const idx = j * (segments + 1) + i;
+                return {
+                    pos: [posAttr.getX(idx), posAttr.getY(idx), posAttr.getZ(idx)],
+                    norm: [normAttr.getX(idx), normAttr.getY(idx), normAttr.getZ(idx)]
+                };
+            };
+
+            // Horizontal lines
+            for (let j = 0; j <= segments; j++) {
+                for (let i = 0; i < segments; i++) {
+                    const p1 = getVertexData(i, j);
+                    const p2 = getVertexData(i + 1, j);
+                    linePositions.push(...p1.pos, ...p2.pos);
+                    lineNormals.push(...p1.norm, ...p2.norm);
+                }
+            }
+
+            // Vertical lines
+            for (let i = 0; i <= segments; i++) {
+                for (let j = 0; j < segments; j++) {
+                    const p1 = getVertexData(i, j);
+                    const p2 = getVertexData(i, j + 1);
+                    linePositions.push(...p1.pos, ...p2.pos);
+                    lineNormals.push(...p1.norm, ...p2.norm);
+                }
+            }
+
+            const lineGeometry = new THREE.BufferGeometry();
+            lineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
+            lineGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(lineNormals, 3));
+
+            material = new THREE.ShaderMaterial({
+                vertexShader,
+                fragmentShader,
+                uniforms: {
+                    uTime: { value: 0 },
+                    uAmplitude: { value: settings.noiseAmplitude },
+                    uScale: { value: settings.noiseScale }
+                },
+                wireframe: false,
+                transparent: true
+            });
+
+            lineMesh = new THREE.LineSegments(lineGeometry, material);
+            scene.add(lineMesh);
+        }
+
+        function setupGUI() {
+            gui = new lil.GUI({ container: document.getElementById('gui-container') });
+            gui.hide();
+
+            const sphereFolder = gui.addFolder('Sphere Settings');
+            sphereFolder.add(settings, 'sphereRadius', 0.5, 4.0).name('Radius').onChange(rebuildSphere);
+            sphereFolder.add(settings, 'sphereSegments', 16, 128, 1).name('Detail').onChange(rebuildSphere);
+            sphereFolder.add(settings, 'noiseAmplitude', 0, 1).name('Noise Amplitude').onChange(v => material.uniforms.uAmplitude.value = v);
+            sphereFolder.add(settings, 'noiseScale', 0.1, 3.0).name('Noise Scale').onChange(v => material.uniforms.uScale.value = v);
+            sphereFolder.add(settings, 'noiseSpeed', 0, 2.0).name('Noise Speed');
+
+            const fxFolder = gui.addFolder('Post FX (Analog)');
+            fxFolder.add(settings, 'bloomStrength', 0, 3.0).name('Bloom Strength').onChange(v => bloomPass.strength = v);
+            fxFolder.add(settings, 'bloomRadius', 0, 1.0).name('Bloom Radius').onChange(v => bloomPass.radius = v);
+            fxFolder.add(settings, 'bloomThreshold', 0, 1.0).name('Bloom Threshold').onChange(v => bloomPass.threshold = v);
+            fxFolder.add(settings, 'rgbShiftAmount', 0, 0.05).name('RGB Shift').onChange(v => {
+                if (rgbShiftPass.uniforms && rgbShiftPass.uniforms.amount) rgbShiftPass.uniforms.amount.value = v;
+            });
+            fxFolder.add(settings, 'filmNoise', 0, 1.0).name('Film Grain').onChange(v => {
+                if (filmPass.uniforms && filmPass.uniforms.nIntensity) filmPass.uniforms.nIntensity.value = v;
+            });
+            fxFolder.add(settings, 'filmScanlineIntensity', 0, 1.0).name('Scanline Intensity').onChange(v => scanlinePass.uniforms.uIntensity.value = v);
+            fxFolder.add(settings, 'filmScanlineFrequency', 50, 1000).name('Scanline Freq').onChange(v => scanlinePass.uniforms.uFrequency.value = v);
+            
+            const miscFolder = gui.addFolder('Misc');
+            miscFolder.add(settings, 'autoRotate').name('Auto-Rotate');
+            miscFolder.add(settings, 'autoRotateSpeed', 0, 2.0).name('Rotation Speed');
+        }
+
+        function onWindowResize() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            composer.setSize(width, height);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = performance.now() * 0.001;
+            
+            if (material) {
+                material.uniforms.uTime.value = time * settings.noiseSpeed;
+            }
+
+            if (settings.autoRotate && lineMesh) {
+                lineMesh.rotation.y += 0.005 * settings.autoRotateSpeed;
+                lineMesh.rotation.x += 0.002 * settings.autoRotateSpeed;
+            }
+
+            controls.update();
+            composer.render();
+        }
+
+        init();
+    </script>
+</body>
+</html>

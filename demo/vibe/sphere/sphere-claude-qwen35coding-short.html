@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Lava Lamp Sphere</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        canvas { display: block; }
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+// ============ SCENE SETUP ============
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.z = 5;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap for performance
+document.body.appendChild(renderer.domElement);
+
+// ============ ORBIT CONTROLS ============
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+
+// ============ SPHERE GEOMETRY ============
+// High-poly icosahedron for smooth surface
+const geometry = new THREE.IcosahedronGeometry(2, 64); // 64 = high detail
+const material = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 1 });
+const sphere = new THREE.LineSegments(geometry, material);
+scene.add(sphere);
+
+// Store original vertices for animation
+const originalPositions = geometry.attributes.position.array.slice();
+const positions = geometry.attributes.position;
+
+// ============ LAVA LAMP ANIMATION ============
+// Create noise-like displacement field
+function getDisplacement(x, y, z, time) {
+    const scale = 0.5;
+    const nx = x * scale, ny = y * scale, nz = z * scale;
+
+    // Combine multiple noise layers
+    const n1 = Math.sin(nx + time * 0.3) * Math.cos(ny + time * 0.2) * 0.3;
+    const n2 = Math.sin(nz + time * 0.4) * Math.sin(nx + time * 0.1) * 0.2;
+    const n3 = Math.cos(ny + time * 0.25) * Math.cos(nz + time * 0.35) * 0.25;
+
+    return (n1 + n2 + n3) * 0.8; // Displacement strength
+}
+
+// ============ CRT POST-PROCESSING ============
+// CRT Shader - RGB distortion, scanlines, curvature, flicker
+const CRTShader = {
+    uniforms: {
+        tDiffuse: { value: null },
+        time: { value: 0 },
+        distortion: { value: 0.002 }, // RGB split amount
+        scanlines: { value: 0.3 },    // Scanline opacity
+        curvature: { value: 0.3 },    // Screen curvature
+        flicker: { value: 0.02 },     // Screen flicker
+        bloom: { value: 0.1 }         // Bloom/glow
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float time;
+        uniform float distortion;
+        uniform float scanlines;
+        uniform float curvature;
+        uniform float flicker;
+        uniform float bloom;
+
+        varying vec2 vUv;
+
+        // CRT curvature
+        vec2 curvatureMap(vec2 uv) {
+            uv = uv * 2.0 - 1.0;
+            float r = dot(uv, uv);
+            uv *= 1.0 - r * curvature;
+            return uv * 0.5 + 0.5;
+        }
+
+        // RGB shift
+        vec3 chromaticAberration(vec2 uv) {
+            float r = texture2D(tDiffuse, uv + vec2(distortion, 0.0)).r;
+            float g = texture2D(tDiffuse, uv).g;
+            float b = texture2D(tDiffuse, uv - vec2(distortion, 0.0)).b;
+            return vec3(r, g, b);
+        }
+
+        // Scanlines
+        vec3 scanlineEffect(vec2 uv) {
+            float line = sin(uv.y * 100.0) * 0.5 + 0.5;
+            return vec3(1.0 - scanlines * line);
+        }
+
+        // Screen flicker
+        float flickerEffect(float time) {
+            return 1.0 + sin(time * 100.0) * flicker * 0.1;
+        }
+
+        void main() {
+            vec2 uv = curvatureMap(vUv);
+            vec3 color = chromaticAberration(uv);
+            color *= scanlineEffect(uv);
+            color *= flickerEffect(time);
+            color += bloom; // Subtle glow
+            gl_FragColor = vec4(color, 1.0);
+        }
+    `
+};
+
+// Bloom Shader
+const BloomShader = {
+    uniforms: {
+        tDiffuse: { value: null },
+        strength: { value: 0.15 },
+        radius: { value: 0.5 }
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float strength;
+        uniform float radius;
+        varying vec2 vUv;
+
+        void main() {
+            vec4 tex = texture2D(tDiffuse, vUv);
+            float glow = texture2D(tDiffuse, vUv + vec2(radius, 0.0)).r;
+            tex.rgb += vec3(glow) * strength;
+            gl_FragColor = tex;
+        }
+    `
+};
+
+// ============ COMPOSER SETUP ============
+const renderScene = new RenderPass(scene, camera);
+const composer = new EffectComposer(renderer);
+composer.addPass(renderScene);
+
+const crtPass = new ShaderPass(CRTShader);
+composer.addPass(crtPass);
+
+const bloomPass = new ShaderPass(BloomShader);
+composer.addPass(bloomPass);
+
+// ============ UI PANEL ============
+let uiVisible = false;
+const uiParams = {
+    // Animation
+    animationSpeed: 0.5,
+    bumpStrength: 0.8,
+
+    // Geometry
+    sphereRadius: 2.0,
+    sphereDetail: 64,
+
+    // CRT Effects
+    distortion: 0.002,
+    scanlines: 0.3,
+    curvature: 0.3,
+    flicker: 0.02,
+    bloom: 0.15
+};
+
+function createUI() {
+    const panel = document.createElement('div');
+    panel.id = 'ui-panel';
+    panel.style.cssText = `
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.9);
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 20px;
+        color: #fff;
+        font-family: monospace;
+        font-size: 12px;
+        z-index: 100;
+        display: none;
+        min-width: 280px;
+    `;
+
+    const createSlider = (label, paramKey) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'margin: 10px 0;';
+        row.innerHTML = `
+            <label style="display:block;margin-bottom:4px;">${label}</label>
+            <input type="range" min="0" max="1" step="0.01" value="${uiParams[paramKey]}"
+                   style="width:100%;accent-color:#fff;">
+            <span id="val-${paramKey}" style="float:right;">${uiParams[paramKey]}</span>
+        `;
+        panel.appendChild(row);
+
+        row.querySelector('input').addEventListener('input', (e) => {
+            uiParams[paramKey] = parseFloat(e.target.value);
+            document.getElementById(`val-${paramKey}`).textContent = uiParams[paramKey].toFixed(3);
+        });
+    };
+
+    panel.innerHTML = '<h3 style="margin:0 0 15px 0;border-bottom:1px solid #333;padding-bottom:10px;">Lava Lamp Sphere</h3>';
+
+    panel.innerHTML += '<h4 style="margin:10px 0 5px;color:#aaa;">Animation</h4>';
+    createSlider('Speed', 'animationSpeed');
+    createSlider('Bump Strength', 'bumpStrength');
+
+    panel.innerHTML += '<h4 style="margin:10px 0 5px;color:#aaa;">Geometry</h4>';
+    createSlider('Radius', 'sphereRadius');
+    createSlider('Detail', 'sphereDetail');
+
+    panel.innerHTML += '<h4 style="margin:10px 0 5px;color:#aaa;">CRT Effects</h4>';
+    createSlider('RGB Distortion', 'distortion');
+    createSlider('Scanlines', 'scanlines');
+    createSlider('Curvature', 'curvature');
+    createSlider('Flicker', 'flicker');
+    createSlider('Bloom', 'bloom');
+
+    panel.innerHTML += '<div style="margin-top:20px;color:#666;font-size:10px;">Press "D" to toggle</div>';
+
+    document.body.appendChild(panel);
+    return panel;
+}
+
+const uiPanel = createUI();
+
+// ============ ANIMATION LOOP ============
+const clock = new THREE.Clock();
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    const time = clock.getElapsedTime();
+    const dt = clock.getDelta();
+
+    // Update sphere geometry
+    const posArray = positions.array;
+    for (let i = 0; i < posArray.length; i += 3) {
+        const x = originalPositions[i];
+        const y = originalPositions[i + 1];
+        const z = originalPositions[i + 2];
+
+        // Get displacement from noise field
+        const displacement = getDisplacement(x, y, z, time * uiParams.animationSpeed);
+
+        // Normalize direction and apply displacement
+        const len = Math.sqrt(x * x + y * y + z * z) || 1;
+        const nx = (x / len) * (1 + displacement * uiParams.bumpStrength);
+        const ny = (y / len) * (1 + displacement * uiParams.bumpStrength);
+        const nz = (z / len) * (1 + displacement * uiParams.bumpStrength);
+
+        posArray[i] = nx;
+        posArray[i + 1] = ny;
+        posArray[i + 2] = nz;
+    }
+    positions.needsUpdate = true;
+
+    // Update shader uniforms
+    crtPass.uniforms.time.value = time;
+    crtPass.uniforms.distortion.value = uiParams.distortion;
+    crtPass.uniforms.scanlines.value = uiParams.scanlines;
+    crtPass.uniforms.curvature.value = uiParams.curvature;
+    crtPass.uniforms.flicker.value = uiParams.flicker;
+    crtPass.uniforms.bloom.value = uiParams.bloom;
+
+    bloomPass.uniforms.strength.value = uiParams.bloom;
+
+    controls.update();
+    composer.render();
+}
+
+// ============ EVENT HANDLERS ============
+// Toggle UI with "D" key
+window.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === 'd') {
+        uiVisible = !uiVisible;
+        uiPanel.style.display = uiVisible ? 'block' : 'none';
+    }
+});
+
+// Handle window resize
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Start animation
+animate();
+</script>
+</body>
+</html>

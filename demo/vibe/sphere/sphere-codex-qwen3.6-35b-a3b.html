@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wireframe Lava Sphere</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; background: #000; }
+  canvas { display: block; }
+</style>
+
+<!-- Import map so ES modules resolve Three.js and its examples -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.1/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.1/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer }   from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass }  from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass }       from 'three/addons/postprocessing/ShaderPass.js';
+import { RGBShiftShader }   from 'three/addons/shaders/RGBShiftShader.js';
+import { FilmShader }       from 'three/addons/shaders/FilmShader.js';
+
+/* ── lil-gui (ESM) ─────────────────────────────────────────── */
+import { GUI } from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
+
+/* ── Config (mirrored in GUI) ─────────────────────────────── */
+const cfg = {
+  noiseAmp:      0.25,
+  noiseScale:    1.8,
+  animSpeed:     0.35,
+  bloomStrength: 1.2,
+  bloomRadius:   0.5,
+  bloomThresh:   0.15,
+  rgbShiftAmt:   0.003,
+  filmNoiseInt:  0.45,
+  filmScanlineInt: 0.65,
+  autoRotate:    true,
+  autoRotSpeed:  0.15,
+};
+
+/* ── Scene / Camera / Renderer ────────────────────────────── */
+const scene    = new THREE.Scene();
+scene.background = new THREE.Color(0x020204);
+
+const camera   = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(0, 0, 5.5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+/* ── OrbitControls ────────────────────────────────────────── */
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping  = true;
+controls.dampingFactor  = 0.06;
+controls.minDistance    = 2.5;
+controls.maxDistance    = 14;
+
+/* ── Sphere with custom vertex-displacement shader ─────────── */
+const sphereUniforms = {
+  uTime:   { value: 0 },
+  uAmp:    { value: cfg.noiseAmp },
+  uScale:  { value: cfg.noiseScale },
+};
+
+const sphereMat = new THREE.ShaderMaterial({
+  uniforms: sphereUniforms,
+  vertexShader: /* glsl */`
+    uniform float uTime;
+    uniform float uAmp;
+    uniform float uScale;
+
+    varying vec3  vNormal;
+    varying vec3  vWorldPos;
+
+    /* 3-D value noise — simple, GLSL ES compatible */
+    float hash(vec3 p){
+      vec3 p3 = fract(p * 0.1031);
+      p3 += dot(p3, p3.yzx + 33.0);
+      return fract((p3.x + p3.y) * p3.z);
+    }
+
+    float noise3D(vec3 p){
+      vec3 i = floor(p);
+      vec3 f = fract(p);
+      vec3 u = f * f * (3.0 - 2.0 * f);
+      float a = mix(mix(hash(i + vec3(0.0, 0.0, 0.0)), hash(i + vec3(1.0, 0.0, 0.0)), u.x),
+                    mix(hash(i + vec3(0.0, 1.0, 0.0)), hash(i + vec3(1.0, 1.0, 0.0)), u.x), u.y);
+      float b = mix(mix(hash(i + vec3(0.0, 0.0, 1.0)), hash(i + vec3(1.0, 0.0, 1.0)), u.x),
+                    mix(hash(i + vec3(0.0, 1.0, 1.0)), hash(i + vec3(1.0, 1.0, 1.0)), u.x), u.y);
+      return mix(a, b, u.z);
+    }
+
+    void main(){
+      vec3 pos = position;
+      float n  = noise3D(pos * uScale + uTime);
+      pos += normal * n * uAmp;
+
+      vNormal  = normalize(normalMatrix * normal);
+      vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */`
+    varying vec3 vNormal;
+    varying vec3 vWorldPos;
+
+    void main(){
+      /* subtle fresnel glow on edges */
+      vec3 viewDir = normalize(cameraPosition - vWorldPos);
+      float fresnel = pow(1.0 - max(dot(normalize(vNormal), viewDir), 0.0), 2.5);
+      vec3 col = mix(vec3(0.78, 0.82, 0.95), vec3(1.0), fresnel);
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `,
+  wireframe: true,
+});
+
+const sphere = new THREE.Mesh(
+  new THREE.SphereGeometry(1.8, 96, 64),
+  sphereMat,
+);
+scene.add(sphere);
+
+/* ── Postprocessing stack ─────────────────────────────────── */
+const composer = new EffectComposer(renderer);
+
+/* 1. Base render */
+composer.addPass(new RenderPass(scene, camera));
+
+/* 2. Bloom */
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(innerWidth, innerHeight),
+  cfg.bloomStrength,
+  cfg.bloomRadius,
+  cfg.bloomThresh,
+);
+composer.addPass(bloomPass);
+
+/* 3. RGB shift */
+const rgbPass = new ShaderPass(RGBShiftShader);
+rgbPass.uniforms.amount.value = cfg.rgbShiftAmt;
+composer.addPass(rgbPass);
+
+/* 4. Film / scanlines */
+const filmPass = new ShaderPass(FilmShader);
+filmPass.uniforms.intensity.value   = cfg.filmScanlineInt;
+filmPass.uniforms.time.value          = 0.0;
+filmPass.uniforms.grayscale.value     = false;
+composer.addPass(filmPass);
+
+/* ── lil-gui (hidden by default) ─────────────────────────── */
+const gui = new GUI({ title: 'Lava Sphere', autoPlace: true });
+gui.domElement.style.display = 'none';
+
+const sSphere = gui.addFolder('Noise');
+sSphere.add(cfg, 'noiseAmp',     0.0, 0.6, 0.01).name('Amplitude');
+sSphere.add(cfg, 'noiseScale',   0.2, 4.0, 0.1).name('Scale');
+sSphere.add(cfg, 'animSpeed',    0.0, 2.0, 0.01).name('Speed');
+
+const sPost = gui.addFolder('Bloom');
+sPost.add(cfg, 'bloomStrength', 0.0, 3.0, 0.01).name('Strength');
+sPost.add(cfg, 'bloomRadius',   0.0, 1.5, 0.01).name('Radius');
+sPost.add(cfg, 'bloomThresh',   0.0, 1.0, 0.01).name('Threshold');
+
+const sFx = gui.addFolder('TV FX');
+sFx.add(cfg, 'rgbShiftAmt',     0.0, 0.02, 0.001).name('RGB Shift');
+sFx.add(cfg, 'filmNoiseInt',    0.0, 2.0, 0.01).name('Noise Int');
+sFx.add(cfg, 'filmScanlineInt', 0.0, 2.0, 0.01).name('Scanline Int');
+
+const sMisc = gui.addFolder('Rotation');
+sMisc.add(cfg, 'autoRotate').name('Auto Rotate');
+sMisc.add(cfg, 'autoRotSpeed', 0.0, 1.5, 0.01).name('Speed');
+
+/* ── Key handler: 'd' toggles GUI ─────────────────────────── */
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'd' || e.key === 'D') {
+    gui.domElement.style.display =
+      gui.domElement.style.display === 'none' ? '' : 'none';
+  }
+});
+
+/* ── Resize handler ──────────────────────────────────────── */
+window.addEventListener('resize', () => {
+  const w = innerWidth, h = innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  composer.setSize(w, h);
+});
+
+/* ── Animation loop ──────────────────────────────────────── */
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const dt = clock.getDelta();
+  sphereUniforms.uTime.value += dt * cfg.animSpeed;
+
+  /* Sync GUI params → uniforms / passes */
+  sphereUniforms.uAmp.value   = cfg.noiseAmp;
+  sphereUniforms.uScale.value = cfg.noiseScale;
+
+  bloomPass.strength  = cfg.bloomStrength;
+  bloomPass.radius    = cfg.bloomRadius;
+  bloomPass.threshold = cfg.bloomThresh;
+
+  rgbPass.uniforms.amount.value = cfg.rgbShiftAmt;
+  filmPass.uniforms.intensity.value = cfg.filmScanlineInt;
+
+  if (cfg.autoRotate) {
+    sphere.rotation.y += dt * cfg.autoRotSpeed;
+  }
+
+  controls.update();
+  composer.render();
+}
+
+animate();
+</script>
+</body>
+</html>

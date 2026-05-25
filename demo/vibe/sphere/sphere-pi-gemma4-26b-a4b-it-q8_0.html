@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wireframe Lava Sphere</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Three.js Core -->
+    <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+    
+    <!-- Controls -->
+    <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- Post-processing -->
+    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    
+    <!-- Shaders -->
+    <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/RGBShiftShader.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/FilmShader.js"></script>
+    
+    <!-- Debug UI -->
+    <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.umd.min.js"></script>
+
+    <script>
+        /**
+         * CONFIGURATION & PARAMETERS
+         */
+        const params = {
+            noiseAmplitude: 0.25,
+            noiseScale: 1.2,
+            noiseSpeed: 0.5,
+            bloomStrength: 1.5,
+            bloomRadius: 0.4,
+            bloomThreshold: 0.1,
+            rgbShift: 0.002,
+            filmNoise: 0.5,
+            filmScanline: 0.3,
+            autoRotate: true,
+            autoRotateSpeed: 0.5
+        };
+
+        let scene, camera, renderer, controls, composer, sphere, material, gui;
+        let effectPasses = {};
+
+        // Shader Source: Simplex 3D Noise
+        const noiseGLSL = `
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+            float snoise(vec3 v) {
+                const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+                const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+
+                vec3 i  = floor(v + dot(v, C.yyy) );
+                vec3 x0 = v - i + dot(i, C.xxx) ;
+
+                vec3 g = step(x0.yzx, x0.xyz);
+                vec3 l = 1.0 - g;
+                vec3 i1 = min( g.xyz, l.zxy );
+                vec3 i2 = max( g.xyz, l.zxy );
+
+                vec3 x1 = x0 - i1 + C.xxx;
+                vec3 x2 = x0 - i2 + C.yyy;
+                vec3 x3 = x0 - D.yyy;
+
+                i = mod289(i);
+                vec4 p = permute( permute( permute(
+                         i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+                       + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
+                       + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+
+                float n_ = 0.142857142857;
+                vec3 ns = n_ * D.wyz - D.xzx;
+
+                vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+
+                vec4 x_ = floor(j * ns.z);
+                vec4 y_ = floor(j - 7.0 * x_ );
+
+                vec4 x = x_ *ns.x + ns.yyyy;
+                vec4 y = y_ *ns.x + ns.yyyy;
+                vec4 h = 1.0 - abs(x) - abs(y);
+
+                vec4 b0 = vec4( x.xy, y.xy );
+                vec4 b1 = vec4( x.zw, y.zw );
+
+                vec4 s0 = floor(b0)*2.0 + 1.0;
+                vec4 s1 = floor(b1)*2.0 + 1.0;
+                vec4 sh = -step(h, vec4(0.0));
+
+                vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+                vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+
+                vec3 p0 = vec3(a0.xy,h.x);
+                vec3 p1 = vec3(a0.zw,h.y);
+                vec3 p2 = vec3(a1.xy,h.z);
+                vec3 p3 = vec3(a1.zw,h.w);
+
+                vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+                p0 *= norm.x;
+                p1 *= norm.y;
+                p2 *= norm.z;
+                p3 *= norm.w;
+
+                float res = dot(p0, x0);
+                res += dot(p1, x1);
+                res += dot(p2, x2);
+                res += dot(p3, x3);
+
+                return 2.2 * res;
+            }
+        `;
+
+        const vertexShader = `
+            uniform float uTime;
+            uniform float uAmplitude;
+            uniform float uScale;
+            varying vec3 vNormal;
+
+            ${noiseGLSL}
+
+            void main() {
+                vNormal = normal;
+                // Apply displacement along normal based on noise
+                float noise = snoise(position * uScale + uTime);
+                vec3 newPosition = position + normal * noise * uAmplitude;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
+            }
+        `;
+
+        const fragmentShader = `
+            varying vec3 vNormal;
+            void main() {
+                // Simple white line color
+                gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+            }
+        `;
+
+        /**
+         * INITIALIZATION
+         */
+        function init() {
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+
+            // Camera setup
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            // Renderer setup
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // OrbitControls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // Sphere creation (Icosahedron gives a nice regular triangular grid)
+            const geometry = new THREE.IcosahedronGeometry(2, 4);
+            material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0.0 },
+                    uAmplitude: { value: params.noiseAmplitude },
+                    uScale: { value: params.noiseScale }
+                },
+                vertexShader: vertexShader,
+                fragmentShader: fragmentShader,
+                wireframe: true
+            });
+            sphere = new THREE.Mesh(geometry, material);
+            scene.add(sphere);
+
+            // Post-processing setup
+            setupPostProcessing();
+
+            // GUI setup
+            setupGUI();
+
+            // Event listeners
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('keydown', onKeyDown);
+
+            // Start loop
+            animate();
+        }
+
+        function setupPostProcessing() {
+            const renderScene = new THREE.RenderPass(scene, camera);
+            
+            const bloomPass = new THREE.UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                params.bloomStrength,
+                params.bloomRadius,
+                params.bloomThreshold
+            );
+
+            composer = new THREE.EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            // RGB Shift
+            if (typeof THREE.RGBShiftShader !== 'undefined') {
+                const rgbShiftPass = new THREE.ShaderPass(THREE.RGBShiftShader);
+                rgbShiftPass.uniforms['amount'].value = params.rgbShift;
+                composer.addPass(rgbShiftPass);
+                effectPasses.rgbShift = rgbShiftPass;
+            }
+
+            // Film
+            if (typeof THREE.FilmShader !== 'undefined') {
+                const filmPass = new THREE.ShaderPass(THREE.FilmShader);
+                // Initial values - using the correct names from the user's console log
+                if (filmPass.uniforms.nIntensity) filmPass.uniforms.nIntensity.value = params.filmNoise;
+                if (filmPass.uniforms.sIntensity) filmPass.uniforms.sIntensity.value = params.filmScanline;
+                
+                composer.addPass(filmPass);
+                effectPasses.film = filmPass;
+                
+                // Log for debugging
+                console.log('FilmShader Uniforms:', filmPass.uniforms);
+            }
+
+            effectPasses.bloom = bloomPass;
+        }
+
+        function setupGUI() {
+            gui = new lil.GUI();
+            gui.domElement.style.display = 'none'; // Hide by default
+            gui.position = 'topright';
+
+            const noiseFolder = gui.addFolder('Sphere / Noise');
+            noiseFolder.add(params, 'noiseAmplitude', 0, 1.0).onChange(v => material.uniforms.uAmplitude.value = v);
+            noiseFolder.add(params, 'noiseScale', 0.1, 5.0).onChange(v => material.uniforms.uScale.value = v);
+            noiseFolder.add(params, 'noiseSpeed', 0, 2.0);
+            noiseFolder.open();
+
+            const fxFolder = gui.addFolder('Post FX');
+            fxFolder.add(params, 'bloomStrength', 0, 3.0).onChange(v => {
+                if (effectPasses.bloom) effectPasses.bloom.strength = v;
+            });
+            fxFolder.add(params, 'bloomRadius', 0, 1.0).onChange(v => {
+                if (effectPasses.bloom) effectPasses.bloom.radius = v;
+            });
+            fxFolder.add(params, 'bloomThreshold', 0, 1.0).onChange(v => {
+                if (effectPasses.bloom) effectPasses.bloom.threshold = v;
+            });
+            fxFolder.add(params, 'rgbShift', 0, 0.05).onChange(v => {
+                if (effectPasses.rgbShift && effectPasses.rgbShift.uniforms) {
+                    const u = effectPasses.rgbShift.uniforms;
+                    if (u.amount) u.amount.value = v;
+                }
+            });
+            fxFolder.add(params, 'filmNoise', 0, 1.0).onChange(v => {
+                if (effectPasses.film && effectPasses.film.uniforms) {
+                    const u = effectPasses.film.uniforms;
+                    if (u.nIntensity) u.nIntensity.value = v;
+                }
+            });
+            fxFolder.add(params, 'filmScanline', 0, 1.0).onChange(v => {
+                if (effectPasses.film && effectPasses.film.uniforms) {
+                    const u = effectPasses.film.uniforms;
+                    if (u.sIntensity) u.sIntensity.value = v;
+                }
+            });
+            fxFolder.open();
+
+            const miscFolder = gui.addFolder('Misc');
+            miscFolder.add(params, 'autoRotate');
+            miscFolder.add(params, 'autoRotateSpeed', 0, 2.0);
+            miscFolder.open();
+        }
+
+        function onWindowResize() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(width, height);
+            composer.setSize(width, height);
+        }
+
+        function onKeyDown(event) {
+            if (event.key.toLowerCase() === 'd') {
+                const display = gui.domElement.style.display === 'none' ? 'block' : 'none';
+                gui.domElement.style.display = display;
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = performance.now() * 0.001;
+
+            // Update Uniforms
+            material.uniforms.uTime.value = time * params.noiseSpeed;
+
+            // Update Post-processing time uniforms
+            if (effectPasses.film && effectPasses.film.uniforms) {
+                if (effectPasses.film.uniforms.time) {
+                    effectPasses.film.uniforms.time.value = time;
+                }
+            }
+
+            // Auto Rotation
+            if (params.autoRotate) {
+                sphere.rotation.y += 0.005 * params.autoRotateSpeed;
+                sphere.rotation.z += 0.002 * params.autoRotateSpeed;
+            }
+
+            // Controls
+            controls.update();
+
+            // Render
+            composer.render();
+        }
+
+        // Run
+        init();
+
+    </script>
+</body>
+</html>

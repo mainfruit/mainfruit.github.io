@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+</meta>
+<title>3D Sphere with TV Effect</title>
+<style>
+body { margin: 0; overflow: hidden; background: #000; }
+canvas { display: block; }
+#ui {
+position: fixed;
+top: 10px;
+right: 10px;
+background: rgba(0,0,0,0.8);
+padding: 15px;
+border-radius: 8px;
+color: #fff;
+font-family: monospace;
+display: none;
+z-index: 100;
+}
+#ui.visible { display: block; }
+.param { margin: 8px 0; }
+.param label { display: inline-block; width: 120px; }
+input[type="range"] { width: 150px; }
+</style>
+</head>
+<body>
+<div id="ui">
+<div class="param"><label>Grid Size:</label><input type="range" id="gridSize" min="5" max="30" value="12"></div>
+<div class="param"><label>Animation Speed:</label><input type="range" id="animSpeed" min="0" max="5" step="0.1" value="1"></div>
+<div class="param"><label>RGB Distortion:</label><input type="range" id="rgbDistortion" min="0" max="20" value="5"></div>
+<div class="param"><label>Blur Amount:</label><input type="range" id="blurAmount" min="0" max="10" value="3"></div>
+<div class="param"><label>Lava Intensity:</label><input type="range" id="lavaIntensity" min="0" max="3" step="0.1" value="1"></div>
+</div>
+
+<canvas id="mainCanvas"></canvas>
+<canvas id="tvCanvas"></canvas>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// Scene setup
+const mainCanvas = document.getElementById('mainCanvas');
+const tvCanvas = document.getElementById('tvCanvas');
+
+function initCanvas() {
+  mainCanvas.style.display = 'block';
+  tvCanvas.style.display = 'block';
+  
+  mainCanvas.width = window.innerWidth;
+  mainCanvas.height = window.innerHeight;
+  tvCanvas.width = window.innerWidth;
+  tvCanvas.height = window.innerHeight;
+  
+  mainCanvas.style.width = window.innerWidth + 'px';
+  mainCanvas.style.height = window.innerHeight + 'px';
+  tvCanvas.style.width = window.innerWidth + 'px';
+  tvCanvas.style.height = window.innerHeight + 'px';
+  
+  mainCanvas.style.position = 'absolute';
+  mainCanvas.style.top = '0';
+  mainCanvas.style.left = '0';
+  tvCanvas.style.position = 'absolute';
+  tvCanvas.style.top = '0';
+  tvCanvas.style.left = '0';
+}
+
+initCanvas();
+
+const renderer = new THREE.WebGLRenderer({ canvas: mainCanvas, antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+const tvContext = tvCanvas.getContext('2d');
+
+// Scene and camera
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.z = 3;
+
+// Sphere with grid rectangles
+const sphereGeometry = new THREE.IcosahedronGeometry(1.5, 24);
+
+// Custom shader for lava animation
+const vertexShader = `
+varying vec3 vNormal;
+varying vec3 vPosition;
+void main() {
+vNormal = normalize(normalMatrix * normal);
+vPosition = position;
+gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const fragmentShader = `
+varying vec3 vNormal;
+varying vec3 vPosition;
+uniform float time;
+uniform float lavaIntensity;
+
+void main() {
+float noiseVal = sin(vNormal.x * 10.0 + time * 2.0) * 
+                 cos(vNormal.y * 10.0 + time * 2.0) * 
+                 sin(vNormal.z * 10.0 + time * 2.0);
+
+float noise2 = sin(vNormal.x * 20.0 + time) * 
+               cos(vNormal.y * 20.0 + time);
+vec3 color = vec3(0.0);
+
+if (noise2 > 0.3) {
+float intensity = (noise2 - 0.3) * 5.0 * lavaIntensity;
+color = vec3(1.0) * intensity;
+}
+
+gl_FragColor = vec4(color, 1.0);
+}
+`;
+
+const uniforms = {
+time: { value: 0.0 },
+lavaIntensity: { value: 1.0 }
+};
+
+const material = new THREE.ShaderMaterial({
+uniforms: uniforms,
+vertexShader: vertexShader,
+fragmentShader: fragmentShader
+});
+
+const sphere = new THREE.Mesh(sphereGeometry, material);
+scene.add(sphere);
+
+// Controls - drag to rotate sphere
+const controls = new OrbitControls(camera, mainCanvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.enableZoom = false;
+controls.enablePan = false;
+
+// UI panel
+const uiPanel = document.getElementById('ui');
+
+const toggleUI = () => {
+uiPanel.classList.toggle('visible');
+};
+
+document.addEventListener('keydown', (e) => {
+if (e.key === 'd' || e.key === 'D') {
+toggleUI();
+}
+});
+
+// UI parameter controls
+document.getElementById('gridSize').addEventListener('input', (e) => {
+sphereGeometry.dispose();
+sphereGeometry = new THREE.IcosahedronGeometry(1.5, parseInt(e.target.value));
+sphere.geometry = sphereGeometry;
+});
+
+document.getElementById('animSpeed').addEventListener('input', (e) => {
+scene.userData.animSpeed = parseFloat(e.target.value);
+});
+
+document.getElementById('rgbDistortion').addEventListener('input', (e) => {
+scene.userData.rgbDistortion = parseFloat(e.target.value);
+});
+
+document.getElementById('blurAmount').addEventListener('input', (e) => {
+scene.userData.blurAmount = parseFloat(e.target.value);
+});
+
+document.getElementById('lavaIntensity').addEventListener('input', (e) => {
+uniforms.lavaIntensity.value = parseFloat(e.target.value);
+});
+
+// Animation loop
+const clock = new THREE.Clock();
+
+function renderTVEffect() {
+const tvWidth = tvCanvas.width;
+const tvHeight = tvCanvas.height;
+
+// Draw the renderer's canvas to offscreen canvas
+tvCanvas.width = tvWidth;
+tvCanvas.height = tvHeight;
+tvContext.drawImage(mainCanvas, 0, 0, tvWidth, tvHeight);
+
+// Get image data for pixel manipulation
+const imageData = tvContext.getImageData(0, 0, tvWidth, tvHeight);
+const data = imageData.data;
+
+const distortion = scene.userData.rgbDistortion || 0;
+const blurAmount = scene.userData.blurAmount || 0;
+
+// Simple RGB distortion
+if (distortion > 0.1) {
+const distortionOffset = Math.floor(distortion * 2);
+for (let y = 0; y < tvHeight; y += 4) {
+for (let x = 0; x < tvWidth; x++) {
+const dstIdx = (y * tvWidth + x) * 4;
+const srcIdxR = (y * tvWidth + Math.min(Math.max(x - distortionOffset, 0), tvWidth - 1)) * 4;
+const srcIdxB = (y * tvWidth + Math.min(Math.max(x + distortionOffset, 0), tvWidth - 1)) * 4;
+
+if (dstIdx + 3 < data.length) {
+data[dstIdx] = imageData.data[srcIdxR];     // Red channel from shifted left
+data[dstIdx + 1] = imageData.data[dstIdx + 1]; // Green stays
+data[dstIdx + 2] = imageData.data[srcIdxB];   // Blue channel from shifted right
+}
+}
+}
+}
+
+// Simple blur effect
+if (blurAmount > 0.1) {
+const blurStrength = blurAmount * 2;
+const tempData = new Uint8ClampedArray(data);
+for (let y = 0; y < tvHeight; y++) {
+for (let x = 0; x < tvWidth; x++) {
+const srcIdx = (y * tvWidth + x) * 4;
+let r = 0, g = 0, b = 0, count = 0;
+
+for (let dy = -2; dy <= 2; dy++) {
+for (let dx = -2; dx <= 2; dx++) {
+if (Math.abs(dy) + Math.abs(dx) <= 2) {
+const nx = Math.min(Math.max(x + dx, 0), tvWidth - 1);
+const ny = Math.min(Math.max(y + dy, 0), tvHeight - 1);
+const srcIdx2 = (ny * tvWidth + nx) * 4;
+r += tempData[srcIdx2];
+g += tempData[srcIdx2 + 1];
+b += tempData[srcIdx2 + 2];
+count++;
+}
+}
+}
+
+if (srcIdx + 3 < data.length) {
+data[srcIdx] = r / count;
+data[srcIdx + 1] = g / count;
+data[srcIdx + 2] = b / count;
+}
+}
+}
+}
+
+tvContext.putImageData(imageData, 0, 0);
+}
+
+// Animation loop
+function animate() {
+requestAnimationFrame(animate);
+
+const delta = clock.getDelta();
+const elapsed = clock.getElapsedTime();
+
+// Update uniforms for lava animation
+const animSpeed = scene.userData.animSpeed || 1;
+uniforms.time.value = elapsed * animSpeed;
+
+// Rotate sphere based on camera rotation
+sphere.rotation.y = camera.rotation.y;
+sphere.rotation.x = camera.rotation.x;
+
+controls.update();
+
+// Main rendering
+renderer.render(scene, camera);
+
+// TV effect rendering
+renderTVEffect();
+}
+
+// Handle window resize
+window.addEventListener('resize', () => {
+const width = window.innerWidth;
+const height = window.innerHeight;
+
+camera.aspect = width / height;
+camera.updateProjectionMatrix();
+
+mainCanvas.width = width;
+mainCanvas.height = height;
+tvCanvas.width = width;
+tvCanvas.height = height;
+
+renderer.setSize(width, height);
+});
+
+// Initialize scene parameters
+scene.userData = {
+animSpeed: 1,
+rgbDistortion: 5,
+blurAmount: 3
+};
+
+// Start animation
+animate();
+</script>
+</body>
+</html>

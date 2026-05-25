@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Three.js Sphere Artwork</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #000; }
+canvas { display: block; }
+#debug-container { position: fixed; top: 10px; right: 10px; z-index: 1000; }
+</style>
+<script type="importmap">
+{"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"}}
+</script>
+</head>
+<body>
+<div id="debug-container"></div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+const config = {
+  sphere: { radius: 3, latSegments: 40, longSegments: 60, rectWidth: 0.08, rectHeight: 0.15, gap: 0.02, displacement: 0 },
+  animation: { amplitude: 0.3, speed: 0.4, scale: 1.5, coherence: 0.9, autoRotate: true, autoRotateSpeed: 0.2 },
+  postProcessing: { rgbShift: 0.0015, blurAmt: 0.2, bloomStrength: 0.6, bloomRadius: 0.4, bloomThreshold: 0, vignette: 0.2, scanlines: 0.1, noise: 0.05, mix: 1, enabled: true },
+  camera: { fov: 45, pixelRatioCap: 2 }
+};
+
+let scene, camera, renderer, controls, composer;
+let instanceMesh, instances = [], positionAttr;
+let clock = new THREE.Clock();
+let gui;
+let autoRotateAngle = 0;
+
+const rgbDistortShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uTime: { value: 0 },
+    uRgbShift: { value: config.postProcessing.rgbShift },
+    uBlurAmt: { value: config.postProcessing.blurAmt },
+    uVignette: { value: config.postProcessing.vignette },
+    uScanlines: { value: config.postProcessing.scanlines },
+    uNoise: { value: config.postProcessing.noise }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uTime;
+    uniform float uRgbShift;
+    uniform float uVignette;
+    uniform float uScanlines;
+    uniform float uNoise;
+    varying vec2 vUv;
+    void main() {
+      vec2 uv = vUv;
+      float ns = sin(uv.y * 800. + uTime * 2.) * cos(uv.x * 600. + uTime) * 0.02;
+      vec3 cr = texture2D(tDiffuse, uv + vec2(uRgbShift + ns, 0.)).rgb;
+      vec3 cg = texture2D(tDiffuse, uv).rgb;
+      vec3 cb = texture2D(tDiffuse, uv - vec2(uRgbShift + ns, 0.)).rgb;
+      vec3 col = vec3(cr.x, cg.y, cb.z);
+      float dist = length(uv - 0.5);
+      float vign = pow(1. - dist * 1.2, 2. + uVignette * 2.);
+      col *= vign;
+      if (uScanlines > 0.001) col += sin(uv.y * 500.) * uScanlines * 0.3;
+      if (uNoise > 0.001) col += (fract(sin(dot(uv, vec2(12.9898, 78.233))) * 43758.54) - 0.5) * uNoise * 0.4;
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `
+};
+
+function init() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x000000);
+  camera = new THREE.PerspectiveCamera(config.camera.fov, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.z = 8;
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, config.camera.pixelRatioCap));
+  document.body.appendChild(renderer.domElement);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.05;
+  controls.minDistance = 4;
+  controls.maxDistance = 15;
+  createSphere();
+  setupPostProcessing();
+  setupGUI();
+  window.addEventListener('resize', onResize);
+  window.addEventListener('keydown', onkeydown);
+}
+
+function createSphere() {
+  const { radius, latSegments, longSegments, rectWidth, rectHeight, gap } = config.sphere;
+  const totalLats = Math.max(2, latSegments - 1);
+  const totalLons = Math.max(2, longSegments);
+  const instancesArray = [];
+
+  for (let lat = 0; lat <= totalLats; lat++) {
+    const phi = (lat / totalLats) * Math.PI;
+    const latRadius = radius * Math.sin(phi);
+    const y = radius * Math.cos(phi);
+    for (let lon = 0; lon < totalLons; lon++) {
+      const theta = (lon / totalLons) * Math.PI * 2;
+      const x = latRadius * Math.cos(theta);
+      const z = latRadius * Math.sin(theta);
+      const latStep = Math.PI / totalLats;
+      const lonStep = (Math.PI * 2) / totalLons;
+      let rectW = lat === 0 || lat === totalLats ? rectWidth * 0.5 : rectWidth;
+      let rectH = Math.min(rectHeight, Math.min(latStep - gap, lonStep * latRadius - gap));
+      if (rectW <= 0 || rectH <= 0) continue;
+      instancesArray.push({
+        basePos: new THREE.Vector3(x, y, z),
+        baseNormal: new THREE.Vector3(x, y, z).normalize(),
+        offset: Math.random() * 100,
+        rectW: rectW,
+        rectH: rectH
+      });
+    }
+  }
+
+  instances = instancesArray;
+  const geometry = new THREE.BufferGeometry();
+  const positions = new Float32Array(instances.length * 3);
+
+  for (let i = 0; i < instances.length; i++) {
+    positions[i * 3] = instances[i].basePos.x;
+    positions[i * 3 + 1] = instances[i].basePos.y;
+    positions[i * 3 + 2] = instances[i].basePos.z;
+  }
+
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  const material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+  instanceMesh = new THREE.Mesh(geometry, material);
+  scene.add(instanceMesh);
+  positionAttr = geometry.attributes.position;
+}
+
+function setupPostProcessing() {
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), config.postProcessing.bloomStrength, config.postProcessing.bloomRadius, config.postProcessing.bloomThreshold);
+composer.addPass(bloomPass);
+const distortPass = new ShaderPass(rgbDistortShader);
+distortPass.renderToScreen = true;
+composer.addPass(distortPass);
+}
+function setupGUI() {
+  gui = new GUI({ container: document.getElementById('debug-container') });
+  const s = gui.add(config.sphere, 'displacement', 0, 1); s.name('displacement');
+  const w = gui.add(config.sphere, 'rectWidth', 0.01, 0.2); w.name('rectWidth');
+  const h = gui.add(config.sphere, 'rectHeight', 0.01, 0.3); h.name('rectHeight');
+  const g = gui.add(config.sphere, 'gap', 0, 0.1); g.name('gap');
+  const animFolder = gui.addFolder('Animation');
+  animFolder.add(config.animation, 'amplitude', 0, 1).name('amplitude');
+  animFolder.add(config.animation, 'speed', 0, 2).name('speed');
+  animFolder.add(config.animation, 'scale', 0.5, 3).name('scale');
+  animFolder.add(config.animation, 'coherence', 0.5, 1).name('coherence');
+  animFolder.add(config.animation, 'autoRotate').name('auto rotate');
+  animFolder.add(config.animation, 'autoRotateSpeed', 0, 1).name('rotation speed');
+  const postFolder = gui.addFolder('Post Processing');
+  postFolder.add(config.postProcessing, 'rgbShift', 0, 0.01).name('RGB shift');
+  postFolder.add(config.postProcessing, 'blurAmt', 0, 0.5).name('blur');
+  postFolder.add(config.postProcessing, 'bloomStrength', 0, 2).name('bloom strength');
+  postFolder.add(config.postProcessing, 'bloomRadius', 0, 1).name('bloom radius');
+  postFolder.add(config.postProcessing, 'vignette', 0, 1).name('vignette');
+  postFolder.add(config.postProcessing, 'scanlines', 0, 0.3).name('scanlines');
+  postFolder.add(config.postProcessing, 'noise', 0, 0.2).name('noise');
+  postFolder.add(config.postProcessing, 'mix', 0, 1).name('effect mix');
+  postFolder.add(config.postProcessing, 'enabled').name('enabled');
+  const camFolder = gui.addFolder('Camera');
+  camFolder.add(config.camera, 'fov', 30, 90, v => { camera.fov = v; camera.updateProjectionMatrix(); }).name('FOV');
+  camFolder.add(config.camera, 'pixelRatioCap', 1, 4).name('pixel ratio cap');
+  gui.add({ reset: () => { config.sphere.displacement = 0; config.sphere.rectWidth = 0.08; config.sphere.rectHeight = 0.15; config.animation.amplitude = 0.3; config.animation.speed = 0.4; config.postProcessing.rgbShift = 0.0015; config.postProcessing.bloomStrength = 0.6; } }, 'reset').name('Reset');
+}
+
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, config.camera.pixelRatioCap));
+  composer.setSize(w, h);
+}
+
+function onkeydown(e) {
+  if (e.key === 'd' || e.key === 'D') gui.domElement.style.display = gui.domElement.style.display === 'none' ? 'block' : 'none';
+}
+
+function updateSphere() {
+  if (!instanceMesh || instances.length === 0) return;
+  const { amplitude, speed, scale, coherence } = config.animation;
+  if (config.sphere.displacement <= 0) return;
+  const time = clock.getElapsedTime() * speed;
+  for (let i = 0; i < instances.length; i++) {
+    const inst = instances[i];
+    const noise = Math.sin(inst.offset * scale + time) * Math.cos(inst.offset * 0.5 + time * 0.8) * Math.sin(inst.offset * 0.3 + time * 1.2);
+    const displacement = noise * amplitude * config.sphere.displacement;
+    const newPos = inst.basePos.clone().add(inst.baseNormal.clone().multiplyScalar(displacement));
+    if (coherence > 0.5) {
+      newPos.x += (i > 0 ? instances[i - 1].basePos.x : newPos.x) * 0.1 * coherence;
+      newPos.x += (i < instances.length - 1 ? instances[i + 1].basePos.x : newPos.x) * 0.1 * coherence;
+      newPos.y += (i > 0 ? instances[i - 1].basePos.y : newPos.y) * 0.1 * coherence;
+      newPos.y += (i < instances.length - 1 ? instances[i + 1].basePos.y : newPos.y) * 0.1 * coherence;
+      newPos.z += (i > 0 ? instances[i - 1].basePos.z : newPos.z) * 0.1 * coherence;
+      newPos.z += (i < instances.length - 1 ? instances[i + 1].basePos.z : newPos.z) * 0.1 * coherence;
+    }
+    positionAttr.setXYZ(i, Math.round(newPos.x * 1000) / 1000, Math.round(newPos.y * 1000) / 1000, Math.round(newPos.z * 1000) / 1000);
+  }
+  positionAttr.needsUpdate = true;
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  if (config.animation.autoRotate) camera.rotation.z += config.animation.autoRotateSpeed * dt;
+  controls.update(dt);
+  updateSphere();
+  camera.rotation.z = 0;
+  if (config.postProcessing.enabled) {
+    const distortPass = composer.passes.find(p => p instanceof ShaderPass);
+    if (distortPass) {
+      distortPass.uniforms.uTime.value = clock.getElapsedTime();
+      distortPass.uniforms.uRgbShift.value = config.postProcessing.rgbShift;
+      distortPass.uniforms.uBlurAmt.value = config.postProcessing.blurAmt;
+      distortPass.uniforms.uVignette.value = config.postProcessing.vignette;
+      distortPass.uniforms.uScanlines.value = config.postProcessing.scanlines;
+      distortPass.uniforms.uNoise.value = config.postProcessing.noise;
+    }
+    const bloomPass = composer.passes.find(p => p instanceof UnrealBloomPass);
+    if (bloomPass) {
+      bloomPass.strength = config.postProcessing.bloomStrength;
+      bloomPass.radius = config.postProcessing.bloomRadius;
+      bloomPass.threshold = config.postProcessing.bloomThreshold;
+    }
+    composer.render();
+  } else {
+    renderer.render(scene, camera);
+  }
+}
+
+init();
+animate();
+</script>
+</body>
+</html>

@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D Sphere - TV Effect</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { 
+    background: #000; 
+    overflow: hidden; 
+    width: 100vw; 
+    height: 100vh;
+}
+</style>
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+    }
+}
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+const config = {
+    sphereRadius: 6,
+    sphereDetail: 128,
+    gridSize: 0.15,
+    lavaSpeed: 0.3,
+    lavaAmplitude: 0.3,
+    distortionStrength: 0.015,
+    chromaticAberration: 0.002,
+    vTuning: 15,
+    hTuning: 5,
+    tvScanlines: true,
+    tvStatic: true,
+    visible: false
+};
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 0, 20);
+
+const canvas = document.createElement('canvas');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+document.body.appendChild(canvas);
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+const sphereGeometry = new THREE.SphereGeometry(
+    config.sphereRadius, 
+    config.sphereDetail, 
+    config.sphereDetail
+);
+
+const sphereMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+        time: { value: 0 }
+    },
+    vertexShader: `
+        uniform float time;
+        varying float vDisplacement;
+        varying vec3 vNormal;
+        varying vec3 vPosition;
+        
+        float hash(float x) {
+            return fract(sin(x) * 43758.5453);
+         }
+        
+        void main() {
+            vNormal = normal;
+            vPosition = position;
+            
+            float angle = position.y * 3.0 + time;
+            float displacement = sin(angle) * cos(position.x * 3.0 + time * 0.5);
+            displacement += sin(position.x * 8.0 + time) * 0.1;
+            displacement += sin(position.z * 8.0 + time) * 0.1;
+            
+            vDisplacement = displacement + 0.5;
+            
+            vec3 pos = position + normal * displacement * 0.15;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+         }
+     `,
+    fragmentShader: `
+        varying float vDisplacement;
+        varying vec3 vNormal;
+        varying vec3 vPosition;
+        
+        vec3 posToColor(vec3 p) {
+            float intensity = 0.5 + vDisplacement * 0.5;
+            vec3 color = vec3(1.0);
+            color *= vec3(0.8 + intensity * 0.4);
+            return color;
+         }
+        
+        void main() {
+            vec3 color = posToColor(vPosition);
+            gl_FragColor = vec4(color, 1.0);
+         }
+     `,
+    side: THREE.FrontSide
+});
+
+const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+scene.add(sphere);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+
+const renderScene = new RenderPass(scene, camera);
+const composer = new EffectComposer(renderer);
+composer.addPass(renderScene);
+
+const tvEffectShader = {
+    uniforms: {
+        tDiffuse: { value: null },
+        time: { value: 0 },
+        distortionStrength: { value: config.distortionStrength },
+        chromaticAberration: { value: config.chromaticAberration },
+        vTuning: { value: config.vTuning },
+        hTuning: { value: config.hTuning },
+        scanlines: { value: config.tvScanlines ? 1.0 : 0.0 },
+        staticNoise: { value: config.tvStatic ? 1.0 : 0.0 }
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+         }
+     `,
+    fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float time;
+        uniform float distortionStrength;
+        uniform float chromaticAberration;
+        uniform float vTuning;
+        uniform float hTuning;
+        uniform float scanlines;
+        uniform float staticNoise;
+        
+        varying vec2 vUv;
+        
+        float rand(vec2 p) {
+            return fract(sin(dot(p, vec2(123.9898, 78.233))) * 43758.5453);
+         }
+        
+        void main() {
+            vec2 uv = vUv;
+            
+            float distortX = distortionStrength * sin(uv.y * 6.28318 + time * 2.0) * 5.0;
+            uv.x -= distortX;
+            
+            uv.y += hTuning * 0.0002 * sin(uv.y * 157.0 - time);
+            
+            float r = texture2D(tDiffuse, uv + vec2(chromaticAberration, 0.0)).r;
+            float g = texture2D(tDiffuse, uv).g;
+            float b = texture2D(tDiffuse, uv + vec2(-chromaticAberration, 0.0)).b;
+            
+            vec3 color = vec3(r, g, b);
+            
+            if (staticNoise > 0.5) {
+                float noise = rand(uv * 500.0 + time * 8.0);
+                color += vec3(noise, noise, noise) * 0.15;
+             }
+            
+            if (scanlines > 0.5) {
+                float sl = sin(uv.y * 1500.0) * 0.5 + 0.5;
+                color *= mix(0.5, 1.0, sl);
+             }
+            
+            gl_FragColor = vec4(color, 1.0);
+         }
+     `
+};
+
+const tvEffectPass = new ShaderPass(tvEffectShader);
+composer.addPass(tvEffectPass);
+
+let uiCanvas = null;
+let uiCtx = null;
+
+function initUI() {
+    uiCanvas = document.createElement('canvas');
+    uiCanvas.width = 280;
+    uiCanvas.height = 180;
+    uiCanvas.style.position = 'fixed';
+    uiCanvas.style.top = '20px';
+    uiCanvas.style.right = '20px';
+    uiCanvas.style.zIndex = '100';
+    uiCanvas.style.pointerEvents = 'none';
+    document.body.appendChild(uiCanvas);
+    uiCtx = uiCanvas.getContext('2d');
+}
+
+function drawUI() {
+    if (!uiCtx) return;
+    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+    if (!config.visible) return;
+    
+    uiCtx.font = '12px system-ui';
+    uiCtx.fillStyle = '#ffffff';
+    
+    const params = [
+         { k: 'gridSize', label: 'Grid Size', val: config.gridSize.toFixed(2) },
+         { k: 'lavaSpeed', label: 'Lava Speed', val: config.lavaSpeed.toFixed(2) },
+         { k: 'lavaAmplitude', label: 'Lava Amp', val: config.lavaAmplitude.toFixed(2) },
+         { k: 'distortionStrength', label: 'Distortion', val: config.distortionStrength.toFixed(3) },
+         { k: 'chromaticAberration', label: 'Chromatic', val: config.chromaticAberration.toFixed(3) },
+         { k: 'vTuning', label: 'V Tuning', val: config.vTuning.toFixed(1) },
+         { k: 'hTuning', label: 'H Tuning', val: config.hTuning.toFixed(1) }
+     ];
+    
+    let y = 15;
+    params.forEach(p => {
+        uiCtx.fillStyle = '#ffffff';
+        uiCtx.fillText(`${p.label}: ${p.val}`, 10, y);
+        y += 15;
+     });
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === 'd') {
+        config.visible = !config.visible;
+     }
+});
+
+window.addEventListener('resize', () => {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
+    
+    canvas.width = w;
+    canvas.height = h;
+    
+    if (uiCanvas) {
+        uiCanvas.width = 280;
+        uiCanvas.height = 180;
+     }
+});
+
+const clock = new THREE.Clock();
+
+function animate() {
+    requestAnimationFrame(animate);
+    
+    const time = clock.getElapsedTime();
+    
+    sphereMaterial.uniforms.time.value = time * config.lavaSpeed;
+    tvEffectShader.uniforms.time.value = time;
+    tvEffectShader.uniforms.distortionStrength.value = config.distortionStrength;
+    tvEffectShader.uniforms.chromaticAberration.value = config.chromaticAberration;
+    tvEffectShader.uniforms.vTuning.value = config.vTuning;
+    tvEffectShader.uniforms.hTuning.value = config.hTuning;
+    tvEffectShader.uniforms.scanlines.value = config.tvScanlines ? 1.0 : 0.0;
+    tvEffectShader.uniforms.staticNoise.value = config.tvStatic ? 1.0 : 0.0;
+    
+    controls.update();
+    composer.render();
+    drawUI();
+}
+
+initUI();
+animate();
+</script>
+</body>
+</html>

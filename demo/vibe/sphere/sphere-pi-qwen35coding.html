@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wireframe Sphere - Analog TV Art</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background: #000; 
+        }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <!-- Three.js Core -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.0/build/three.min.js"></script>
+    
+    <!-- OrbitControls -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- Shaders -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/shaders/RGBShiftShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/shaders/FilmShader.js"></script>
+    
+    <!-- Postprocessing -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.126.0/examples/js/postprocessing/ShaderPass.js"></script>
+    
+    <!-- lil-gui Debug UI -->
+    <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.1/dist/lil-gui.umd.min.js"></script>
+    
+    <script>
+         function main() {
+            if (!window.THREE) {
+                setTimeout(main, 30);
+                return;
+            }
+            
+            console.log('Three.js loaded, version:', THREE.REVISION);
+            
+               // === Scene Setup ===
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x050505);
+            
+               // === Camera ===
+            const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 50);
+            camera.position.z = 12;
+            
+               // === Renderer ===
+            const renderer = new THREE.WebGLRenderer({ antialias: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+            
+               // === OrbitControls ===
+            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.5;
+            
+               // === Wireframe Sphere ===
+            const sphereGeometry = new THREE.IcosahedronGeometry(4, 64);
+            const sphereMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uAmp: { value: 0.5 },
+                    uFreq: { value: 1.5 },
+                    uSpeed: { value: 0.8 }
+                 },
+                vertexShader: `
+                    uniform float uTime;
+                    uniform float uAmp;
+                    uniform float uFreq;
+                    uniform float uSpeed;
+                    
+                    float rand(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.54); }
+                    float noise(vec2 p) {
+                        vec2 i = floor(p);
+                        vec2 f = fract(p);
+                        f = f * f * (3.0 - 2.0 * f);
+                        return mix(mix(rand(i + vec2(0.0)), rand(i + vec2(1.0)), f.x),
+                                   mix(rand(i + vec2(0.0, 1.0)), rand(i + vec2(1.0)), f.x), f.y);
+                       }
+                    
+                    void main() {
+                        vec3 pos = position;
+                        float no = noise(pos.xy * uFreq + uTime * uSpeed);
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos + normalize(pos) * no * uAmp, 1.0);
+                       }
+                   `,
+                fragmentShader: 'void main() { gl_FragColor = vec4(0.85, 0.92, 0.98, 1.0); }',
+                wireframe: true
+               });
+            
+            const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+            scene.add(sphere);
+            
+               // === Postprocessing ===
+            const composer = new THREE.EffectComposer(renderer);
+            composer.addPass(new THREE.RenderPass(scene, camera));
+            
+               // Bloom pass
+            const bloomPass = new THREE.UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                1.5, 1.0, 0.0
+               );
+            composer.addPass(bloomPass);
+            
+               // RGB Shift pass
+            const rgbShiftShader = {
+                uniforms: {
+                    uTexture: { value: null },
+                    uAmount: { value: 0.002 }
+                 },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                       }
+                     `,
+                fragmentShader: `
+                    uniform sampler2D uTexture;
+                    uniform float uAmount;
+                    varying vec2 vUv;
+                    void main() {
+                        vec2 uv = vUv;
+                        gl_FragColor = texture2D(uTexture, uv);
+                        gl_FragColor.r = texture2D(uTexture, uv + vec2(uAmount, 0.0)).r;
+                        gl_FragColor.b = texture2D(uTexture, uv - vec2(uAmount, 0.0)).b;
+                        gl_FragColor.g = gl_FragColor.g * 0.95;
+                        }
+                      `,
+                 renderer: true
+                       };
+            const rgbShiftPass = new THREE.ShaderPass(rgbShiftShader);
+            rgbShiftPass.renderToScreen = true;
+            composer.addPass(rgbShiftPass);
+            
+               // Film shader
+            const filmShader = {
+                uniforms: {
+                    uTexture: { value: null },
+                    uTime: { value: 0.0 },
+                    uNoiseFactor: { value: 0.15 },
+                    uScanlineFactor: { value: 0.2 }
+                 },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                       }
+                     `,
+                fragmentShader: `
+                    uniform sampler2D uTexture;
+                    uniform float uTime;
+                    uniform float uNoiseFactor;
+                    uniform float uScanlineFactor;
+                    varying vec2 vUv;
+                    void main() {
+                        vec3 result = texture2D(uTexture, vUv).rgb;
+                        float scanline = 0.95 + 0.1 * sin(vUv.y * 500.0 - uTime * 20.0) * uScanlineFactor;
+                        gl_FragColor = vec4(result * scanline, 1.0);
+                        float noise = sin(vUv.y * 900.0 + uTime * 100.0) * 0.02 * uNoiseFactor;
+                        gl_FragColor.rgb += noise;
+                        }
+                      `,
+                  renderer: true
+                       };
+            const filmPass = new THREE.ShaderPass(filmShader);
+            composer.addPass(filmPass);
+            
+            composer.addPass(new THREE.RenderPass(scene, camera));
+            
+               // === lil-gui Debug UI ===
+            const guiObj = {
+                amplitude: 0.5,
+                frequency: 1.5,
+                speed: 0.8,
+                bloom: 1.5,
+                bloomRadius: 1.0,
+                rgbShift: 0.002,
+                noise: 0.15,
+                scanlines: 0.2,
+                autoRotate: true,
+                rotSpeed: 0.5
+                };
+            
+            const gui = new lil.GUI({ title: 'Controls' });
+            gui.domElement.style.display = 'none';
+            
+            const noiseFolder = gui.addFolder('Noise');
+            noiseFolder.add(guiObj, 'amplitude', 0, 2).name('Amplitude').onChange(v => sphereMaterial.uniforms.uAmp.value = v);
+            noiseFolder.add(guiObj, 'frequency', 0, 5).name('Frequency').onChange(v => sphereMaterial.uniforms.uFreq.value = v);
+            noiseFolder.add(guiObj, 'speed', 0, 3).name('Speed').onChange(v => sphereMaterial.uniforms.uSpeed.value = v);
+            
+            const postFolder = gui.addFolder('Post FX');
+            postFolder.add(guiObj, 'bloom', 0, 3).name('Bloom Strength').onChange(v => bloomPass.strength = v);
+            postFolder.add(guiObj, 'bloomRadius', 0, 2).name('Bloom Radius').onChange(v => bloomPass.radius = v);
+            postFolder.add(guiObj, 'rgbShift', 0, 0.02).name('RGB Shift').onChange(v => rgbShiftShader.uniforms.uAmount.value = v);
+            postFolder.add(guiObj, 'noise', 0, 1).name('Film Noise').onChange(v => filmShader.uniforms.uNoiseFactor.value = v);
+            postFolder.add(guiObj, 'scanlines', 0, 1).name('Scanlines').onChange(v => filmShader.uniforms.uScanlineFactor.value = v);
+            
+            const miscFolder = gui.addFolder('Misc');
+            miscFolder.add(guiObj, 'autoRotate').name('Auto Rotate').onChange(v => controls.autoRotate = v);
+            miscFolder.add(guiObj, 'rotSpeed', 0, 10).name('Rotation Speed').onChange(v => controls.autoRotateSpeed = v);
+            
+               // === GUI Toggle with 'd' key ===
+            window.addEventListener('keydown', e => {
+                if (e.key.toLowerCase() === 'd') {
+                    gui.domElement.style.display = gui.domElement.style.display === 'none' ? 'block' : 'none';
+                    }
+                });
+            
+               // === Resize Handler ===
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                composer.setSize(window.innerWidth, window.innerHeight);
+                });
+            
+               // === Animation Loop ===
+            const clock = new THREE.Clock();
+            
+            function animate() {
+                requestAnimationFrame(animate);
+                
+                sphereMaterial.uniforms.uTime.value = clock.getElapsedTime();
+                filmShader.uniforms.uTime.value = clock.getElapsedTime();
+                
+                controls.update();
+                composer.render();
+                }
+            
+            console.log('Starting animation loop...');
+            animate();
+           }
+        
+          main();
+       </script>
+</body>
+</html>

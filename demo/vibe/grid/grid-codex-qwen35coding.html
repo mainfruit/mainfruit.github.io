@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lava Grid</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            overflow: hidden;
+            background: #000;
+        }
+        canvas {
+            display: block;
+        }
+        .controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(20, 20, 20, 0.85);
+            padding: 20px;
+            border-radius: 8px;
+            color: white;
+            font-family: system-ui, -apple-system, sans-serif;
+            z-index: 100;
+            min-width: 180px;
+            backdrop-filter: blur(10px);
+        }
+        .controls h2 {
+            font-size: 16px;
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+        }
+        .control-group {
+            margin-bottom: 14px;
+        }
+        .control-group label {
+            display: block;
+            font-size: 12px;
+            margin-bottom: 6px;
+            color: rgba(255,255,255,0.9);
+        }
+        .control-group input[type="range"] {
+            width: 100%;
+            cursor: pointer;
+        }
+        .value-display {
+            display: inline-block;
+            margin-left: 8px;
+            font-size: 11px;
+            color: rgba(255,255,255,0.7);
+            min-width: 40px;
+            text-align: right;
+        }
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div class="controls">
+        <h2>Lava Grid Settings</h2>
+        <div class="control-group">
+            <label>Grid Width <span class="value-display" id="width-val">40</span></label>
+            <input type="range" id="grid-width" min="5" max="100" value="40" step="1">
+        </div>
+        <div class="control-group">
+            <label>Grid Height <span class="value-display" id="height-val">40</span></label>
+            <input type="range" id="grid-height" min="5" max="100" value="40" step="1">
+        </div>
+        <div class="control-group">
+            <label>Cell Size <span class="value-display" id="cell-size-val">0.5</span></label>
+            <input type="range" id="cell-size" min="0.1" max="2.0" value="0.5" step="0.05">
+        </div>
+        <div class="control-group">
+            <label>Wave Speed <span class="value-display" id="wave-speed-val">0.4</span></label>
+            <input type="range" id="wave-speed" min="0.0" max="3.0" value="0.4" step="0.01">
+        </div>
+        <div class="control-group">
+            <label>Wave Height <span class="value-display" id="wave-height-val">1.2</span></label>
+            <input type="range" id="wave-height" min="0.0" max="5.0" value="1.2" step="0.05">
+        </div>
+        <div class="control-group">
+            <label>Noise Scale <span class="value-display" id="noise-scale-val">0.5</span></label>
+            <input type="range" id="noise-scale" min="0.1" max="3.0" value="0.5" step="0.01">
+        </div>
+    </div>
+
+    <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    function hash(x, y) {
+        const z = Math.sin(x * 12.9898 + y * 78.233) * 43758.547;
+        return z - Math.floor(z);
+    }
+
+    function lerp(a, b, t) {
+        return a + (b - a) * t;
+    }
+
+    function smoothNoise(x, y) {
+        const ix = Math.floor(x);
+        const iy = Math.floor(y);
+        const fx = x - ix;
+        const fy = y - iy;
+        const sx = fx * fx * (3 - 2 * fx);
+        const sy = fy * fy * (3 - 2 * fy);
+
+        const n00 = hash(ix, iy);
+        const n10 = hash(ix + 1, iy);
+        const n01 = hash(ix, iy + 1);
+        const n11 = hash(ix + 1, iy + 1);
+
+        const nx0 = lerp(n00, n10, sx);
+        const nx1 = lerp(n01, n11, sx);
+        return lerp(nx0, nx1, sy);
+    }
+
+    function noise(x, y, octaves = 4, persistence = 0.5) {
+        let value = 0;
+        let amplitude = 1;
+        let frequency = 1;
+        let maxAmp = 0;
+
+        for (let i = 0; i < octaves; i++) {
+            value += amplitude * smoothNoise(x * frequency, y * frequency);
+            maxAmp += amplitude;
+            amplitude *= persistence;
+            frequency *= 2;
+        }
+        return value / maxAmp;
+    }
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+
+    const camera = new THREE.PerspectiveCamera(
+        75,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        1000
+    );
+    camera.position.set(0, 20, 20);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableZoom = true;
+    controls.enablePan = true;
+    controls.enableRotate = true;
+    controls.update();
+
+    let gridWidth = 40;
+    let gridHeight = 40;
+    let cellSize = 0.5;
+    let waveSpeed = 0.4;
+    let waveHeight = 1.2;
+    let noiseScale = 0.5;
+
+    let noiseTime = 0;
+
+    let gridGeometry = null;
+    let gridLines = null;
+    let vertices = [];
+
+    function buildGrid() {
+        if (gridLines) {
+            scene.remove(gridLines);
+            gridLines.geometry.dispose();
+            gridLines = null;
+        }
+
+        const columns = gridWidth;
+        const rows = gridHeight;
+        const size = cellSize;
+
+        const positions = [];
+        vertices = [];
+
+        for (let j = 0; j < rows; j++) {
+            for (let i = 0; i < columns; i++) {
+                const x = (i - (columns - 1) / 2) * size;
+                const z = (j - (rows - 1) / 2) * size;
+                positions.push(x, 0, z);
+                vertices.push({ x, z });
+            }
+        }
+
+        gridGeometry = new THREE.BufferGeometry();
+        gridGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+
+        const indices = [];
+
+        for (let i = 0; i < columns; i++) {
+            for (let j = 0; j < rows - 1; j++) {
+                const idx = i + j * columns;
+                indices.push(idx, idx + columns);
+            }
+        }
+
+        for (let j = 0; j < rows; j++) {
+            for (let i = 0; i < columns - 1; i++) {
+                const idx = i + j * columns;
+                indices.push(idx, idx + 1);
+            }
+        }
+
+        gridGeometry.setIndex(indices);
+        gridGeometry.computeVertexNormals();
+
+        gridLines = new THREE.LineSegments(
+            gridGeometry,
+            new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 1 })
+        );
+        scene.add(gridLines);
+    }
+
+    function updateNoise() {
+        if (!gridLines) return;
+
+        const positions = gridLines.geometry.attributes.position;
+
+        for (let j = 0; j < gridHeight; j++) {
+            for (let i = 0; i < gridWidth; i++) {
+                const idx = i + j * gridWidth;
+                const x = vertices[idx].x;
+                const z = vertices[idx].z;
+
+                const nx = x * noiseScale + noiseTime * waveSpeed * 0.5;
+                const nz = z * noiseScale + noiseTime * waveSpeed * 0.3;
+
+                const n1 = noise(nx, nz, 4, 0.5);
+                const n2 = noise(nx * 2.0, nz * 2.0, 3, 0.5);
+                const n3 = noise(nx * 4.0, nz * 4.0, 2, 0.5);
+
+                const y = (n1 + n2 * 0.5 + n3 * 0.25) * waveHeight;
+
+                positions.setY(idx, y);
+            }
+        }
+
+        positions.needsUpdate = true;
+        if (gridLines.geometry.normals) {
+            gridLines.geometry.computeVertexNormals();
+        }
+    }
+
+    buildGrid();
+
+    // Update value displays
+    function updateDisplay(id, val) {
+        const display = document.getElementById(id);
+        if (display) {
+            display.textContent = parseFloat(val).toFixed(1);
+        }
+    }
+
+    const widthInput = document.getElementById('grid-width');
+    const heightInput = document.getElementById('grid-height');
+    const cellInput = document.getElementById('cell-size');
+    const speedInput = document.getElementById('wave-speed');
+    const heightControl = document.getElementById('wave-height');
+    const scaleInput = document.getElementById('noise-scale');
+
+    widthInput.addEventListener('input', function() {
+        gridWidth = parseFloat(this.value);
+        updateDisplay('width-val', this.value);
+        buildGrid();
+        for (let j = 0; j < gridHeight; j++) {
+            for (let i = 0; i < gridWidth; i++) {
+                const idx = i + j * gridWidth;
+                vertices[idx].x = (i - (gridWidth - 1) / 2) * cellSize;
+                vertices[idx].z = (j - (gridHeight - 1) / 2) * cellSize;
+            }
+        }
+        updateNoise();
+    });
+
+    heightInput.addEventListener('input', function() {
+        gridHeight = parseFloat(this.value);
+        updateDisplay('height-val', this.value);
+        buildGrid();
+        for (let j = 0; j < gridHeight; j++) {
+            for (let i = 0; i < gridWidth; i++) {
+                const idx = i + j * gridWidth;
+                vertices[idx].x = (i - (gridWidth - 1) / 2) * cellSize;
+                vertices[idx].z = (j - (gridHeight - 1) / 2) * cellSize;
+            }
+        }
+        updateNoise();
+    });
+
+    cellInput.addEventListener('input', function() {
+        cellSize = parseFloat(this.value);
+        updateDisplay('cell-size-val', this.value);
+        buildGrid();
+        for (let j = 0; j < gridHeight; j++) {
+            for (let i = 0; i < gridWidth; i++) {
+                const idx = i + j * gridWidth;
+                vertices[idx].x = (i - (gridWidth - 1) / 2) * cellSize;
+                vertices[idx].z = (j - (gridHeight - 1) / 2) * cellSize;
+            }
+        }
+        updateNoise();
+    });
+
+    speedInput.addEventListener('input', function() {
+        waveSpeed = parseFloat(this.value);
+        updateDisplay('wave-speed-val', this.value);
+        updateNoise();
+    });
+
+    heightControl.addEventListener('input', function() {
+        waveHeight = parseFloat(this.value);
+        updateDisplay('wave-height-val', this.value);
+        updateNoise();
+    });
+
+    scaleInput.addEventListener('input', function() {
+        noiseScale = parseFloat(this.value);
+        updateDisplay('noise-scale-val', this.value);
+        updateNoise();
+    });
+
+    const clock = new THREE.Clock();
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        const delta = clock.getDelta();
+        noiseTime += delta * waveSpeed;
+
+        updateNoise();
+        controls.update();
+        renderer.render(scene, camera);
+    }
+
+    animate();
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    });
+    </script>
+</body>
+</html>

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RGB Distortion Wireframe Sphere</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; overflow: hidden; font-family: system-ui, -apple-system, sans-serif; }
+canvas { display: block; filter: blur(var(--blur, 0.5px)); }
+#controls, #debug-panel { position: fixed; background: rgba(0, 0, 0, 0.85); padding: 20px; border-radius: 8px; color: #fff; min-width: 200px; font-family: system-ui, -apple-system, sans-serif; }
+#controls { top: 20px; right: 20px; z-index: 100; }
+#debug-panel { top: 20px; left: 20px; z-index: 100; display: none; }
+#debug-panel.visible { display: block; }
+.control-group { margin-bottom: 15px; }
+.control-group label { display: block; font-size: 12px; margin-bottom: 5px; color: #aaa; }
+.control-group input[type="range"] { width: 100%; cursor: pointer; }
+.control-group .value { font-size: 11px; color: #666; margin-top: 3px; }
+.debug-row { display: flex; justify-content: space-between; font-size: 11px; color: #666; margin-bottom: 4px; }
+</style>
+<script type="importmap">
+{
+"imports": {
+"three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+"three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+}
+}
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableZoom = true;
+controls.enablePan = true;
+camera.position.set(0, 0, 8);
+
+let widthSegments = 48;
+let heightSegments = 48;
+let radius = 2.0;
+let waveSpeed = 0.4;
+let waveHeight = 0.3;
+let noiseScale = 0.8;
+
+let rgbIntensity = 0.03;
+let rgbSpeed = 0.4;
+let rgbFrequency = 0.8;
+
+let blurAmount = 0.5;
+
+let meshes = [];
+let positions = [];
+let originalPositions = [];
+
+function createSpheres() {
+    meshes.forEach(m => {
+        scene.remove(m);
+        m.geometry.dispose();
+        m.material.dispose();
+     });
+    meshes = [];
+    positions = [];
+    originalPositions = [];
+    
+    const colors = [0xff0000, 0x00ff00, 0x0000ff];
+    const matCommon = { color: 0xffffff, wireframe: true, transparent: true, opacity: 0.9 };
+    
+    colors.forEach((color, idx) => {
+        const geometry = new THREE.SphereGeometry(radius, widthSegments, heightSegments);
+        const material = new THREE.MeshBasicMaterial({ ...matCommon, color: color });
+        const mesh = new THREE.Mesh(geometry, material);
+        scene.add(mesh);
+        meshes.push(mesh);
+        positions.push(geometry.attributes.position);
+        originalPositions.push(new Float32Array(geometry.attributes.position.array.slice()));
+     });
+}
+
+createSpheres();
+
+const clock = new THREE.Clock();
+const frameCount = { value: 0 };
+
+const debugPanel = document.createElement('div');
+debugPanel.id = 'debug-panel';
+const debugContent = `
+<div class="debug-row"><span>FPS:</span><span id="debug-fps">0</span></div>
+<div class="debug-row"><span>Width Segs:</span><span id="debug-width">0</span></div>
+<div class="debug-row"><span>Height Segs:</span><span id="debug-height">0</span></div>
+<div class="debug-row"><span>Radius:</span><span id="debug-radius">0</span></div>
+<div class="debug-row"><span>Wave Speed:</span><span id="debug-wavespeed">0</span></div>
+<div class="debug-row"><span>Wave Height:</span><span id="debug-waveheight">0</span></div>
+<div class="debug-row"><span>Noise Scale:</span><span id="debug-noisescale">0</span></div>
+<div class="debug-row"><span>RGB Intensity:</span><span id="debug-rgbintensity">0</span></div>
+<div class="debug-row"><span>RGB Speed:</span><span id="debug-rgbspeed">0</span></div>
+<div class="debug-row"><span>RGB Frequency:</span><span id="debug-rgbfrequency">0</span></div>
+<div class="debug-row"><span>Blur:</span><span id="debug-blur">0</span></div>
+`;
+debugPanel.innerHTML = debugContent;
+document.body.appendChild(debugPanel);
+
+const panel = document.createElement('div');
+panel.id = 'controls';
+panel.style.display = 'none';
+
+const controlsList = [
+     { id: 'widthSegments', label: 'Width Segments', min: 4, max: 128, step: 1, value: 48 },
+     { id: 'heightSegments', label: 'Height Segments', min: 4, max: 128, step: 1, value: 48 },
+     { id: 'radius', label: 'Sphere Radius', min: 0.5, max: 5.0, step: 0.1, value: 2.0 },
+     { id: 'waveSpeed', label: 'Wave Speed', min: 0.0, max: 3.0, step: 0.01, value: 0.4 },
+     { id: 'waveHeight', label: 'Wave Height', min: 0.0, max: 1.5, step: 0.01, value: 0.3 },
+     { id: 'noiseScale', label: 'Noise Scale', min: 0.1, max: 3.0, step: 0.01, value: 0.8 },
+     { id: 'rgbIntensity', label: 'RGB Intensity', min: 0.0, max: 0.1, step: 0.001, value: 0.03 },
+     { id: 'rgbSpeed', label: 'RGB Speed', min: 0.0, max: 3.0, step: 0.01, value: 0.4 },
+     { id: 'rgbFrequency', label: 'RGB Frequency', min: 0.1, max: 3.0, step: 0.01, value: 0.8 },
+     { id: 'blurAmount', label: 'Blur Amount', min: 0.0, max: 2.0, step: 0.1, value: 0.5 }
+];
+
+controlsList.forEach(cd => {
+    const group = document.createElement('div');
+    group.className = 'control-group';
+    group.style.marginBottom = '15px';
+    
+    const label = document.createElement('label');
+    label.textContent = cd.label;
+    label.style.display = 'block';
+    label.style.fontSize = '12px';
+    label.style.marginBottom = '5px';
+    label.style.color = '#aaa';
+    
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = cd.min;
+    slider.max = cd.max;
+    slider.step = cd.step;
+    slider.value = cd.value;
+    slider.style.width = '100%';
+    slider.style.cursor = 'pointer';
+    
+    const valueDiv = document.createElement('div');
+    valueDiv.className = 'value';
+    valueDiv.textContent = cd.value;
+    valueDiv.style.fontSize = '11px';
+    valueDiv.style.color = '#666';
+    valueDiv.style.marginTop = '3px';
+    
+    slider.addEventListener('input', () => {
+        const val = parseFloat(slider.value);
+        valueDiv.textContent = val.toFixed(cd.step < 0.01 ? 3 : cd.step < 0.1 ? 2 : cd.step < 1 ? 1 : 0);
+        
+        if (cd.id === 'widthSegments') widthSegments = Math.round(val);
+        if (cd.id === 'heightSegments') heightSegments = Math.round(val);
+        if (cd.id === 'radius') radius = val;
+        if (cd.id === 'waveSpeed') waveSpeed = val;
+        if (cd.id === 'waveHeight') waveHeight = val;
+        if (cd.id === 'noiseScale') noiseScale = val;
+        if (cd.id === 'rgbIntensity') rgbIntensity = val;
+        if (cd.id === 'rgbSpeed') rgbSpeed = val;
+        if (cd.id === 'rgbFrequency') rgbFrequency = val;
+        if (cd.id === 'blurAmount') blurAmount = val;
+        
+        document.body.style.setProperty('--blur', blurAmount + 'px');
+        
+        if (cd.id !== 'blurAmount') {
+            createSpheres();
+        }
+     });
+    
+    group.appendChild(label);
+    group.appendChild(slider);
+    group.appendChild(valueDiv);
+    panel.appendChild(group);
+});
+
+document.body.appendChild(panel);
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'd' || e.key === 'D') {
+        panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+        debugPanel.classList.toggle('visible');
+    }
+});
+
+function updateDebug() {
+    frameCount.value++;
+    if (frameCount.value % 10 === 0) {
+        const fps = Math.round(1 / clock.getDelta() * 10) / 10;
+        document.getElementById('debug-fps').textContent = fps;
+        document.getElementById('debug-width').textContent = widthSegments;
+        document.getElementById('debug-height').textContent = heightSegments;
+        document.getElementById('debug-radius').textContent = radius.toFixed(1);
+        document.getElementById('debug-wavespeed').textContent = waveSpeed.toFixed(2);
+        document.getElementById('debug-waveheight').textContent = waveHeight.toFixed(2);
+        document.getElementById('debug-noisescale').textContent = noiseScale.toFixed(2);
+        document.getElementById('debug-rgbintensity').textContent = rgbIntensity.toFixed(3);
+        document.getElementById('debug-rgbspeed').textContent = rgbSpeed.toFixed(2);
+        document.getElementById('debug-rgbfrequency').textContent = rgbFrequency.toFixed(2);
+        document.getElementById('debug-blur').textContent = blurAmount.toFixed(1);
+    }
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    
+    const time = clock.getElapsedTime();
+    
+    controls.update();
+    
+    const waveSpeedVal = waveSpeed;
+    const waveHeightVal = waveHeight;
+    const noiseScaleVal = noiseScale;
+    const rgbIntensityVal = rgbIntensity;
+    const rgbSpeedVal = rgbSpeed;
+    const rgbFreqVal = rgbFrequency;
+    
+    for (let m = 0; m < 3; m++) {
+        const pos = positions[m];
+        const orig = originalPositions[m];
+        
+        const phase = m * (Math.PI / 3);
+        const speedMult = m === 0 ? 1.2 : m === 1 ? 1.0 : 0.8;
+        const tRGB = time * speedMult + phase;
+        
+        for (let i = 0; i < pos.count; i++) {
+            const ox = orig[i * 3 + 0];
+            const oy = orig[i * 3 + 1];
+            const oz = orig[i * 3 + 2];
+            const len = Math.sqrt(ox * ox + oy * oy + oz * oz) || 1;
+            const nx = ox / len;
+            const ny = oy / len;
+            const nz = oz / len;
+            
+            const nx_off = (ox + tRGB * waveSpeedVal) * noiseScaleVal;
+            const ny_off = (oy + tRGB * waveSpeedVal * 0.7) * noiseScaleVal;
+            const nz_off = (oz + tRGB * waveSpeedVal * 1.3) * noiseScaleVal;
+            
+            const n0 = Math.sin(nx_off) + Math.sin(ny_off) + Math.sin(nz_off);
+            const n1 = Math.sin(nx_off * 2.1 + 0.5) + Math.sin(ny_off * 2.1 + 0.5) + Math.sin(nz_off * 2.1 + 0.5);
+            const n2 = Math.sin(nx_off * 0.33 + 1.0) + Math.sin(ny_off * 0.33 + 1.0) + Math.sin(nz_off * 0.33 + 1.0);
+            const noise = (n0 + n1 + n2) / 3.0 * 0.333 + 0.5;
+            const displacement = (noise - 0.5) * 2.0 * waveHeightVal;
+            
+            const dx = ox + nx * displacement;
+            const dy = oy + ny * displacement;
+            const dz = oz + nz * displacement;
+            
+            const noiseRGB = Math.sin(tRGB * rgbFreqVal * 2 + phase * 3) * rgbIntensityVal;
+            const noiseRGBY = Math.sin(tRGB * rgbFreqVal * 2.1 + phase * 3 + 1.0) * rgbIntensityVal * 0.8;
+            const noiseRGBZ = Math.sin(tRGB * rgbFreqVal * 1.9 + phase * 3 + 2.0) * rgbIntensityVal * 0.6;
+            
+            pos.setXYZ(i, dx + noiseRGB, dy + noiseRGBY, dz + noiseRGBZ);
+         }
+        
+        pos.needsUpdate = true;
+     }
+    
+    renderer.render(scene, camera);
+    updateDebug();
+}
+
+animate();
+
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>

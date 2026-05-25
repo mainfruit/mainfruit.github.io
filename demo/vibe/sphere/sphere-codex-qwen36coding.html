@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sphere</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; width: 100%; height: 100%; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script type="module">
+    // ─── Config ──────────────────────────────────────────────
+    const config = {
+      sphere: {
+        radius: 3.0,
+        latitudeSegments: 45,
+        longitudeSegments: 60,
+        rectWidth: 0.07,
+        rectHeight: 0.12,
+        gap: 0.02,
+        shellDepth: 0.08,
+      },
+      animation: {
+        amplitude: 0.15,
+        frequency: 0.6,
+        speed: 0.3,
+        noiseScale: 0.8,
+        coherence: 0.7,
+        autoRotate: true,
+        autoRotateSpeed: 0.4,
+      },
+      post: {
+        rgbShift: 0.5,
+        blurAmount: 0.3,
+        bloomStrength: 0.25,
+        vignetteAmount: 0.6,
+        scanlineStrength: 0.15,
+        noiseAmount: 0.04,
+        effectMix: 1.0,
+        enabled: true,
+      },
+      camera: {
+        fov: 50,
+        pixelRatio: 2,
+        bgColor: '#000000',
+      },
+    };
+
+    // ─── Simplex noise GLSL (3D) + FBM ──────────────────────
+    const simplexNoiseGLSL = `
+      vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+      vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+      float snoise(vec3 v) {
+        const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+        const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+        vec3 i  = floor(v + dot(v, C.yyy));
+        vec3 x0 = v - i + dot(i, C.xxx);
+        vec3 g = step(x0.yzx, x0.xyz);
+        vec3 l = 1.0 - g;
+        vec3 i1 = min(g, l.zxy);
+        vec3 i2 = max(g, l.zxy);
+        vec3 x1 = x0 - i1 + C.xxx;
+        vec3 x2 = x0 - i2 + C.yyy;
+        vec3 x3 = x0 - D.yyy;
+        i = mod289(i);
+        vec4 p = permute(permute(permute(
+          i.z + vec4(0.0, i1.z, i2.z, 1.0))
+          + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+          + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+        float n_ = 1.0/7.0;
+        vec3 ns = n_ * D.wyz - D.xzx;
+        vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+        vec4 x_ = floor(j * ns.z);
+        vec4 y_ = floor(j - 7.0 * x_);
+        vec4 x = x_ * ns.x + ns.yyyy;
+        vec4 y = y_ * ns.x + ns.yyyy;
+        vec4 h = 1.0 - abs(x) - abs(y);
+        vec4 b0 = vec4(x.xy, y.xy);
+        vec4 b1 = vec4(x.zw, y.zw);
+        vec4 s0 = floor(b0)*2.0 + 1.0;
+        vec4 s1 = floor(b1)*2.0 + 1.0;
+        vec4 sh = -step(h, vec4(0.0));
+        vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+        vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+        vec3 p0 = vec3(a0.xy, h.x);
+        vec3 p1 = vec3(a0.zw, h.y);
+        vec3 p2 = vec3(a1.xy, h.z);
+        vec3 p3 = vec3(a1.zw, h.w);
+        vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+        p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+        vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+        m = m * m;
+        return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+      }
+
+      float fbm(vec3 p) {
+        float val = 0.0;
+        float amp = 0.5;
+        float freq = 1.0;
+        for (int i = 0; i < 4; i++) {
+          val += amp * snoise(p * freq);
+          freq *= 2.0;
+          amp *= 0.5;
+        }
+        return val;
+      }
+    `;
+
+    // ─── Scene Setup ─────────────────────────────────────────
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+    import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+    
+
+    const canvas = document.getElementById('canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(config.camera.pixelRatio, window.devicePixelRatio));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.toneMapping = THREE.NoToneMapping;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(config.camera.bgColor);
+
+    const camera = new THREE.PerspectiveCamera(
+      config.camera.fov,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      100
+    );
+    camera.position.set(0, 0, 6);
+
+    // ─── Sphere Rectangles (Fibonacci distribution) ──────────
+    const { latitudeSegments: latSegs, longitudeSegments: lonSegs } = config.sphere;
+    const rectCount = latSegs * lonSegs;
+
+    // Build geometry: one quad per rectangle
+    const totalVerts = rectCount * 4;
+    const positions = new Float32Array(totalVerts * 3);
+    const uvs = new Float32Array(totalVerts * 2);
+    const basePositions = new Float32Array(totalVerts * 3);
+    const baseNormals = new Float32Array(totalVerts * 3);
+    const indices = [];
+
+    let vertIdx = 0;
+    for (let i = 0; i < rectCount; i++) {
+      // Fibonacci sphere distribution
+      const phi = Math.acos(1 - 2 * (i + 0.5) / rectCount);
+      const theta = Math.PI * (1 + Math.sqrt(5)) * i;
+      const r = config.sphere.radius;
+
+      const bx = r * Math.sin(phi) * Math.cos(theta);
+      const by = r * Math.sin(phi) * Math.sin(theta);
+      const bz = r * Math.cos(phi);
+      const len = Math.sqrt(bx*bx + by*by + bz*bz);
+      const nx = bx / len, ny = by / len, nz = bz / len;
+
+      // Quad vertices in local space (centered at origin)
+      const hw = config.sphere.rectWidth * 0.5;
+      const hh = config.sphere.rectHeight * 0.5;
+      const qv = [
+        [-hw, -hh, 0], [hw, -hh, 0], [hw, hh, 0], [-hw, hh, 0]
+      ];
+
+      for (let v = 0; v < 4; v++) {
+        positions[vertIdx * 3]     = qv[v][0];
+        positions[vertIdx * 3 + 1] = qv[v][1];
+        positions[vertIdx * 3 + 2] = qv[v][2];
+
+        uvs[vertIdx * 2]     = v === 0 ? 0 : (v === 1 || v === 2) ? 1 : 0;
+        uvs[vertIdx * 2 + 1] = v < 2 ? 0 : 1;
+
+        // Each vertex of the quad shares the same base position & normal
+        basePositions[(vertIdx) * 3]     = bx;
+        baseNormals[(vertIdx) * 3]       = nx;
+        basePositions[(vertIdx) * 3 + 1] = by;
+        baseNormals[(vertIdx) * 3 + 1]   = ny;
+        basePositions[(vertIdx) * 3 + 2] = bz;
+        baseNormals[(vertIdx) * 3 + 2]   = nz;
+
+        vertIdx++;
+      }
+
+      // Two triangles per quad
+      const a = i * 4, b = a+1, c = a+2, d = a+3;
+      indices.push(a, b, c, a, c, d);
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setAttribute('basePosition', new THREE.BufferAttribute(basePositions, 3));
+    geometry.setAttribute('baseNormal', new THREE.BufferAttribute(baseNormals, 3));
+    geometry.setIndex(indices);
+
+    // ─── Shader Material ─────────────────────────────────────
+    const sphereMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime:       { value: 0 },
+        uAmplitude:  { value: config.animation.amplitude },
+        uFrequency:  { value: config.animation.frequency },
+        uSpeed:      { value: config.animation.speed },
+        uNoiseScale: { value: config.animation.noiseScale },
+        uCoherence:  { value: config.animation.coherence },
+        uRectWidth:  { value: config.sphere.rectWidth },
+        uRectHeight: { value: config.sphere.rectHeight },
+        uGap:        { value: config.sphere.gap },
+        uShellDepth: { value: config.sphere.shellDepth },
+      },
+      vertexShader: `
+        ${simplexNoiseGLSL}
+
+        attribute vec3 basePosition;
+        attribute vec3 baseNormal;
+
+        uniform float uTime;
+        uniform float uAmplitude;
+        uniform float uFrequency;
+        uniform float uSpeed;
+        uniform float uNoiseScale;
+        uniform float uCoherence;
+        uniform float uShellDepth;
+
+        varying vec2 vUv;
+        varying vec3 vWorldPos;
+        varying vec3 vNormal;
+
+        void main() {
+          vUv = uv;
+
+          // Noise-driven displacement along radial direction
+          vec3 noiseInput = basePosition * uNoiseScale + uTime * uSpeed * 0.15;
+          float n1 = fbm(noiseInput);
+          float n2 = snoise(noiseInput * 1.5 + uTime * uSpeed * 0.1);
+
+          float displacement = mix(n1, n2, uCoherence) * uAmplitude;
+          vec3 displacedBase = basePosition + baseNormal * displacement;
+
+          // Secondary shell layering for depth
+          float shellOffset = snoise(noiseInput * 0.5 + vec3(100.0)) * uShellDepth * 0.3;
+          displacedBase += baseNormal * shellOffset;
+
+          vWorldPos = displacedBase;
+          vNormal   = normalize(baseNormal);
+
+          // Apply local quad offset to displaced base position
+          vec4 mvPosition = modelViewMatrix * vec4(displacedBase + position, 1.0);
+          gl_Position     = projectionMatrix * mvPosition;
+        }
+      `,
+      fragmentShader: `
+        varying vec2 vUv;
+        varying vec3 vWorldPos;
+        varying vec3 vNormal;
+
+        uniform float uRectWidth;
+        uniform float uRectHeight;
+        uniform float uGap;
+
+        void main() {
+          // White with subtle depth-based brightness variation
+          float brightness = 0.9 + 0.1 * dot(vNormal, normalize(-vWorldPos));
+
+          // Check if pixel is within rectangle bounds (with gap margin)
+          vec2 center = abs(vUv - 0.5);
+          float margin = uGap * 0.3;
+          float halfSize = 0.5 - margin;
+          if (halfSize <= 0.01) {
+            gl_FragColor = vec4(vec3(brightness), 1.0);
+            return;
+          }
+          vec2 uvNorm = center / halfSize;
+          float dist = max(uvNorm.x, uvNorm.y);
+          float alpha = 1.0 - smoothstep(0.85, 1.15, dist);
+
+          if (alpha < 0.001) discard;
+          gl_FragColor = vec4(vec3(brightness), alpha);
+        }
+      `,
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+
+    const sphereMesh = new THREE.Mesh(geometry, sphereMaterial);
+    scene.add(sphereMesh);
+
+    // ─── Post-Processing Pipeline ────────────────────────────
+    const composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+
+    // RGB Shift (chromatic aberration) pass
+    const rgbShiftShader = {
+      uniforms: {
+        tDiffuse: { value: null },
+        uAmount:  { value: config.post.rgbShift },
+        uMix:     { value: config.post.effectMix },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float uAmount;
+        uniform float uMix;
+        varying vec2 vUv;
+
+        void main() {
+          vec4 color = texture2D(tDiffuse, vUv);
+          float shift = uAmount * 0.003;
+          vec2 dir = normalize(vUv - 0.5) * shift;
+
+          float r = texture2D(tDiffuse, vUv + dir).r;
+          float g = texture2D(tDiffuse, vUv).g;
+          float b = texture2D(tDiffuse, vUv - dir).b;
+
+          vec4 result = vec4(r, g, b, color.a);
+          gl_FragColor = mix(color, result, uMix);
+        }
+      `,
+    };
+    const rgbShiftPass = new ShaderPass(rgbShiftShader);
+    composer.addPass(rgbShiftPass);
+
+    // Bloom pass for glossy response
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      config.post.bloomStrength,  // strength
+      0.4,                         // radius
+      0.85                         // threshold
+    );
+    composer.addPass(bloomPass);
+
+    // Vignette pass
+    const vignetteShader = {
+      uniforms: {
+        tDiffuse: { value: null },
+        uAmount:  { value: config.post.vignetteAmount },
+        uMix:     { value: config.post.effectMix },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float uAmount;
+        uniform float uMix;
+        varying vec2 vUv;
+
+        void main() {
+          vec4 color = texture2D(tDiffuse, vUv);
+          vec2 center = vUv - 0.5;
+          float vig = 1.0 - dot(center, center) * uAmount;
+          vig = clamp(vig, 0.0, 1.0);
+          gl_FragColor = mix(color, vec4(color.rgb * vig, color.a), uMix);
+        }
+      `,
+    };
+    const vignettePass = new ShaderPass(vignetteShader);
+    composer.addPass(vignettePass);
+
+    // Scanlines + Noise pass
+    const scanlineNoiseShader = {
+      uniforms: {
+        tDiffuse:  { value: null },
+        uStrength: { value: config.post.scanlineStrength },
+        uNoise:    { value: config.post.noiseAmount },
+        uTime:     { value: 0 },
+        uMix:      { value: config.post.effectMix },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float uStrength;
+        uniform float uNoise;
+        uniform float uTime;
+        uniform float uMix;
+        varying vec2 vUv;
+
+        void main() {
+          vec4 color = texture2D(tDiffuse, vUv);
+
+          // Scanlines: subtle horizontal lines
+          float scanline = sin(vUv.y * 600.0) * 0.5 + 0.5;
+          scanline = pow(scanline, 0.35);
+          vec4 scanned = vec4(color.rgb * mix(1.0, scanline, uStrength), color.a);
+
+          // Film grain noise
+          float n = fract(sin(dot(vUv + fract(uTime), vec2(12.9898, 78.233))) * 43758.5453);
+          n = (n - 0.5) * uNoise;
+          scanned.rgb += n;
+
+          gl_FragColor = mix(color, scanned, uMix);
+        }
+      `,
+    };
+    const scanlinePass = new ShaderPass(scanlineNoiseShader);
+    composer.addPass(scanlinePass);
+
+    // ─── OrbitControls ───────────────────────────────────────
+    const controls = new OrbitControls(camera, canvas);
+    controls.enableDamping  = true;
+    controls.dampingFactor  = 0.05;
+    controls.rotateSpeed    = 0.6;
+    controls.zoomSpeed      = 0.8;
+    controls.minDistance     = 3.5;
+    controls.maxDistance     = 15;
+    controls.enablePan      = false;
+
+    // ─── Custom Debug Panel ──────────────────────────────────
+    let panelVisible = true;
+
+    function createPanel() {
+      const panel = document.createElement('div');
+      panel.id = 'debug-panel';
+      panel.innerHTML = `
+        <style>
+          #debug-panel {
+            position: fixed; top: 10px; right: 10px; z-index: 9999;
+            background: rgba(20,20,25,0.92); color: #ccc; font-family: system-ui, sans-serif;
+            font-size: 12px; border-radius: 8px; padding: 0; width: 300px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.5); user-select: none;
+          }
+          #debug-panel .panel-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 14px; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.08);
+          }
+          #debug-panel .panel-header span { font-weight: 600; font-size: 13px; color: #fff; }
+          #debug-panel .panel-header button {
+            background: none; border: none; color: #888; cursor: pointer; font-size: 16px; padding: 0 4px;
+          }
+          #debug-panel .panel-body { display: block; }
+          #debug-panel.collapsed .panel-body { display: none; }
+          #debug-panel .folder-title {
+            padding: 8px 14px; font-weight: 600; color: #aaa; cursor: pointer;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+          }
+          #debug-panel .folder-title:hover { color: #fff; background: rgba(255,255,255,0.03); }
+          #debug-panel .control-row {
+            display: flex; align-items: center; padding: 4px 14px; gap: 8px;
+          }
+          #debug-panel .control-row label {
+            min-width: 90px; color: #999; font-size: 11px;
+          }
+          #debug-panel input[type=range] {
+            flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+            background: rgba(255,255,255,0.15); border-radius: 2px; outline: none; cursor: pointer;
+          }
+          #debug-panel input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+            background: #6e8efb; cursor: pointer; border: 2px solid rgba(0,0,0,0.3);
+          }
+          #debug-panel .val { min-width: 36px; text-align: right; color: #7a9aff; font-size: 11px; }
+          #debug-panel input[type=checkbox] { cursor: pointer; accent-color: #6e8efb; }
+        </style>
+        <div class="panel-header" onclick="document.getElementById('debug-panel').classList.toggle('collapsed')">
+          <span>Sphere Debug</span><button title="Toggle">−</button>
+        </div>
+        <div class="panel-body">
+          <div class="folder-title">Sphere / Layout</div>
+          ${makeSlider('sphere.radius', 'Radius', 0.5, 8, 0.1, config.sphere.radius)}
+          ${makeSlider('sphere.rectWidth', 'Rect Width', 0.02, 0.3, 0.01, config.sphere.rectWidth)}
+          ${makeSlider('sphere.rectHeight', 'Rect Height', 0.02, 0.3, 0.01, config.sphere.rectHeight)}
+          ${makeSlider('sphere.gap', 'Gap / Spacing', -0.05, 0.1, 0.01, config.sphere.gap)}
+          ${makeSlider('sphere.shellDepth', 'Shell Depth', 0, 0.3, 0.01, config.sphere.shellDepth)}
+
+          <div class="folder-title">Animation</div>
+          ${makeSlider('animation.amplitude', 'Amplitude', 0, 0.5, 0.01, config.animation.amplitude)}
+          ${makeSlider('animation.frequency', 'Frequency', 0.1, 2.0, 0.05, config.animation.frequency)}
+          ${makeSlider('animation.speed', 'Speed', 0, 2.0, 0.05, config.animation.speed)}
+          ${makeSlider('animation.noiseScale', 'Noise Scale', 0.1, 3.0, 0.1, config.animation.noiseScale)}
+          ${makeSlider('animation.coherence', 'Coherence', 0, 1, 0.05, config.animation.coherence)}
+          <div class="control-row">
+            <label>Auto Rotate</label>
+            <input type="checkbox" id="ctrl-autoRotate" checked onchange="window.updateAutoRotate(this.checked)">
+          </div>
+          ${makeSlider('animation.autoRotateSpeed', 'Rot Speed', -2, 2, 0.1, config.animation.autoRotateSpeed)}
+
+          <div class="folder-title">Post Effects</div>
+          ${makeSlider('post.rgbShift', 'RGB Shift', 0, 3, 0.05, config.post.rgbShift)}
+          ${makeSlider('post.blurAmount', 'Blur Amount', 0, 1, 0.05, config.post.blurAmount)}
+          ${makeSlider('post.bloomStrength', 'Bloom Strength', 0, 2, 0.05, config.post.bloomStrength)}
+          ${makeSlider('post.vignetteAmount', 'Vignette Amount', 0, 2, 0.05, config.post.vignetteAmount)}
+          ${makeSlider('post.scanlineStrength', 'Scanline Strength', 0, 1, 0.05, config.post.scanlineStrength)}
+          ${makeSlider('post.noiseAmount', 'Noise Amount', 0, 0.2, 0.01, config.post.noiseAmount)}
+          ${makeSlider('post.effectMix', 'Effect Mix', 0, 1, 0.05, config.post.effectMix)}
+          <div class="control-row">
+            <label>Enabled</label>
+            <input type="checkbox" id="ctrl-postEnabled" checked onchange="window.updatePostEnabled(this.checked)">
+          </div>
+
+          <div class="folder-title">Camera / Render</div>
+          ${makeSlider('camera.fov', 'FOV', 20, 120, 1, config.camera.fov)}
+          ${makeSlider('camera.pixelRatio', 'Pixel Ratio Cap', 0.5, 4, 0.5, config.camera.pixelRatio)}
+
+          <div class="control-row" style="padding-top:8px; border-top:1px solid rgba(255,255,255,0.06); margin-top:4px;">
+            <button onclick="location.reload()" style="flex:1; padding:6px; background:#3a3a4a; color:#ccc; border:none; border-radius:4px; cursor:pointer; font-size:11px;">Reset to Defaults</button>
+          </div>
+        </div>`;
+      document.body.appendChild(panel);
+    }
+
+    window.updateFromSlider = updateFromSlider;
+    window.makeSlider = makeSlider;
+
+    function makeSlider(path, label, min, max, step, value) {
+      return `<div class="control-row">
+        <label>${label}</label>
+        <input type="range" min="${min}" max="${max}" step="${step}" value="${value}"
+          oninput="window.updateFromSlider('${path}', this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(${step<1?2:0})">
+        <span class="val">${typeof value === 'number' ? parseFloat(value).toFixed(step<1?2:0) : value}</span>
+      </div>`;
+    }
+
+    function updateFromSlider(path, val) {
+      const parts = path.split('.');
+      let obj = config;
+      for (let i = 0; i < parts.length - 1; i++) obj = obj[parts[i]];
+      const numVal = parseFloat(val);
+      obj[parts[parts.length - 1]] = numVal;
+
+      // Sync shader uniforms
+      if (path === 'sphere.radius') updateSphereRadius();
+      if (path === 'post.rgbShift') rgbShiftPass.uniforms.uAmount.value = numVal;
+      if (path === 'post.bloomStrength') bloomPass.strength = numVal;
+      if (path === 'post.vignetteAmount') vignettePass.uniforms.uAmount.value = numVal;
+      if (path === 'post.scanlineStrength') scanlinePass.uniforms.uStrength.value = numVal;
+      if (path === 'post.noiseAmount') scanlinePass.uniforms.uNoise.value = numVal;
+      if (path === 'post.effectMix') {
+        rgbShiftPass.uniforms.uMix.value = numVal;
+        vignettePass.uniforms.uMix.value = numVal;
+        scanlinePass.uniforms.uMix.value = numVal;
+      }
+      if (path === 'camera.fov') { camera.fov = numVal; camera.updateProjectionMatrix(); }
+    }
+
+    window.updateAutoRotate = function(v) {
+      config.animation.autoRotate = v;
+      controls.autoRotate = v;
+    };
+
+    window.updatePostEnabled = function(v) {
+      config.post.enabled = v;
+    };
+
+    createPanel();
+    // ─── Keyboard Handler ────────────────────────────────────
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'd' || e.key === 'D') {
+        const panel = document.getElementById('debug-panel');
+        if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+      }
+    });
+
+    // ─── Resize Handler ──────────────────────────────────────
+    function onResize() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+
+      renderer.setSize(w, h);
+      composer.setSize(w, h);
+    }
+    window.addEventListener('resize', onResize);
+
+    // ─── Sphere Geometry Update Helpers ──────────────────────
+    function updateSphereRadius() {
+      const r = config.sphere.radius;
+      const count = rectCount;
+      for (let i = 0; i < count; i++) {
+        const phi = Math.acos(1 - 2 * (i + 0.5) / count);
+        const theta = Math.PI * (1 + Math.sqrt(5)) * i;
+        const baseIdx = i * 4; // 4 vertices per quad
+
+        const bx = r * Math.sin(phi) * Math.cos(theta);
+        const by = r * Math.sin(phi) * Math.sin(theta);
+        const bz = r * Math.cos(phi);
+        const len = Math.sqrt(bx*bx + by*by + bz*bz);
+
+        for (let v = 0; v < 4; v++) {
+          basePositions[(baseIdx+v)*3]     = bx;
+          baseNormals[(baseIdx+v)*3]       = bx / len;
+          basePositions[(baseIdx+v)*3+1]   = by;
+          baseNormals[(baseIdx+v)*3+1]     = by / len;
+          basePositions[(baseIdx+v)*3+2]   = bz;
+          baseNormals[(baseIdx+v)*3+2]     = bz / len;
+        }
+      }
+      sphereMaterial.attributes.basePosition.needsUpdate = true;
+      sphereMaterial.attributes.baseNormal.needsUpdate = true;
+    }
+
+    function rebuildSphere() {
+      // Full geometry rebuild: update rect dimensions in shader uniforms
+      sphereMaterial.uniforms.uRectWidth.value  = config.sphere.rectWidth;
+      sphereMaterial.uniforms.uRectHeight.value = config.sphere.rectHeight;
+      sphereMaterial.uniforms.uGap.value        = config.sphere.gap;
+    }
+
+    // ─── Animation Loop ──────────────────────────────────────
+    let elapsed = 0;
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const dt = 1 / 60;
+      elapsed += dt * config.animation.speed;
+
+      // Update shader uniforms
+      sphereMaterial.uniforms.uTime.value       = elapsed;
+      sphereMaterial.uniforms.uAmplitude.value  = config.animation.amplitude;
+      sphereMaterial.uniforms.uFrequency.value  = config.animation.frequency;
+      sphereMaterial.uniforms.uSpeed.value      = config.animation.speed;
+      sphereMaterial.uniforms.uNoiseScale.value = config.animation.noiseScale;
+      sphereMaterial.uniforms.uCoherence.value  = config.animation.coherence;
+
+      // Update post-processing uniforms
+      scanlinePass.uniforms.uTime.value = elapsed;
+
+      controls.update();
+
+      if (config.post.enabled) {
+        composer.render();
+      } else {
+        renderer.render(scene, camera);
+      }
+    }
+
+    animate();
+  </script>
+</body>
+</html>

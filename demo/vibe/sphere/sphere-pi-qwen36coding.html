@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Wireframe Lava Sphere – Three.js r144</title>
+<style>
+   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html,body { width:100%; height:100%; overflow:hidden; background:#000; }
+  canvas { display:block; width:100vw; height:100vh; }
+</style>
+</head>
+<body>
+
+<!-- Three.js core + addons (v0.144.0) -->
+<script src="https://unpkg.com/three@0.144.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.144.0/examples/js/controls/OrbitControls.js"></script>
+<!-- Postprocessing chain -->
+<script src="https://unpkg.com/three@0.144.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://unpkg.com/three@0.144.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://unpkg.com/three@0.144.0/examples/js/postprocessing/RenderPass.js"></script>
+<!-- Shaders (must load before Bloom passes) -->
+<script src="https://unpkg.com/three@0.144.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://unpkg.com/three@0.144.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<!-- Postprocessing passes -->
+<script src="https://unpkg.com/three@0.144.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://unpkg.com/three@0.144.0/examples/js/shaders/FilmShader.js"></script>
+<script src="https://unpkg.com/three@0.144.0/examples/js/shaders/RGBShiftShader.js"></script>
+<!-- lil-gui -->
+<script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.umd.min.js"></script>
+
+<script>
+(function(){
+   "use strict";
+
+   // ── CONFIG ──
+  var P = {
+    nAmp:         0.28,
+    nFreq:        2.5,
+    nSpeed:       0.3,
+    bloomStr:     1.5,
+    bloomRad:     0.6,
+    bloomTh:      0.1,
+    rgbShift:     0.004,
+    filmNoise:    0.35,
+    filmScan:     0.8,
+    autoRot:    true,
+    autoRotSp:    0.5
+  };
+
+   // ── RENDERER ──
+  var R = new THREE.WebGLRenderer({antialias:true});
+  R.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  R.setSize(window.innerWidth, window.innerHeight);
+  R.setClearColor(0x000000);
+  document.body.appendChild(R.domElement);
+
+   // ── SCENE & CAMERA ──
+  var Scn   = new THREE.Scene();
+  var Cam   = new THREE.PerspectiveCamera(55,
+      window.innerWidth/window.innerHeight,0.1,100);
+  Cam.position.set(0,0,5.5);
+
+   // ── ORBIT CONTROLS ──
+  var Ctr = new THREE.OrbitControls(Cam, R.domElement);
+  Ctr.enableDamping     = true;
+  Ctr.dampingFactor     = 0.06;
+  Ctr.autoRotate        = true;
+  Ctr.autoRotateSpeed   = P.autoRotSp;
+  Ctr.enableZoom        = true;
+  Ctr.enablePan         = true;
+  Ctr.minDistance         = 3;
+  Ctr.maxDistance         = 12;
+
+   // ── SHADERS ──
+   // Vertex: 3D hash-based value noise + FBM → displacement along normal
+  var vs = [
+     "precision highp float;",
+     "",
+     "uniform float uTime;",
+     "uniform float uAmp;",
+      "uniform float uFreq;",
+     "",
+     "varying vec3 vN;",
+     "varying vec3 vWP;",
+     "varying float vD;",
+     "",
+     // 1-D hash from vec3
+     "float h(vec3 p){",
+     "  return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);",
+     "}",
+     "",
+     // 3-D value noise (trilinear interpolation over 8 voxel corners)
+     "float vn(vec3 p){",
+     "  vec3 i=floor(p), f=fract(p);",
+     "  vec3 w=f*f*(3.0-2.0*f);",
+     "  float n000=h(i+vec3(0,0,0));",
+     "  float n100=h(i+vec3(1,0,0));",
+     "  float n010=h(i+vec3(0,1,0));",
+     "  float n110=h(i+vec3(1,1,0));",
+     "  float n001=h(i+vec3(0,0,1));",
+     "  float n101=h(i+vec3(1,0,1));",
+     "  float n011=h(i+vec3(0,1,1));",
+     "  float n111=h(i+vec3(1,1,1));",
+     "  float n00=mix(n000,n100,w.x);",
+     "  float n01=mix(n001,n101,w.x);",
+     "  float n10=mix(n010,n110,w.x);",
+     "  float n11=mix(n011,n111,w.x);",
+     "  float n0=mix(n00,n01,w.y);",
+     "  float n1=mix(n10,n11,w.y);",
+     "  return mix(n0,n1,w.z);",
+     "}",
+     "",
+     // FBM: 4 octaves
+     "float fbm(vec3 p){",
+     "  float v=0.0, a=0.5;",
+     "  for(int i=0;i<4;i++){ v+=a*vn(p); p*=2.0; a*=0.5; }",
+     "  return v;",
+     "}",
+     "",
+     "void main(){",
+     "  vN   = normalize(normalMatrix * normal);",
+     "  vec4 wp = modelMatrix * vec4(position,1.0);",
+     "  vWP  = wp.xyz;",
+     "  float v = fbm(position * uFreq + uTime);",
+      "  vD     = v * 2.0 - 1.0;",
+     "  vec3 pos = position + normal * vD * uAmp;",
+     "  gl_Position = projectionMatrix * modelViewMatrix * vec4(pos,1.0);",
+     "}"
+  ].join("\n");
+
+   // Wireframe fragment: off-white with displacement-based highlight
+  var fsW = [
+     "precision highp float;",
+     "varying vec3 vN, vWP;",
+     "varying float vD;",
+     "void main(){",
+     "  vec3 c = vec3(0.92,0.94,1.0);",
+     "  c = mix(c, c*1.4, smoothstep(0.3,0.7,vD));",
+     "  float fe = pow(1.0-abs(dot(normalize(vN),vec3(0,0,1))),0.8);",
+     "  c += fe*0.12;",
+     "  gl_FragColor = vec4(c,1.0);",
+     "}"
+  ].join("\n");
+
+   // Inner glow fragment
+  var fsI = [
+     "precision highp float;",
+     "varying vec3 vN, vWP;",
+     "varying float vD;",
+     "void main(){",
+     "  vec3 c = vec3(0.03,0.01,0.08);",
+     "  c += vec3(0.04,0.02,0.06)*smoothstep(0.3,0.7,vD);",
+     "  c += 0.02*sin(vD*5.0+vWP.y*2.0);",
+     "  gl_FragColor = vec4(c,0.35);",
+     "}"
+  ].join("\n");
+
+   // ── SPHERE MESHES ──
+  var geo = new THREE.IcosahedronGeometry(2, 32);
+
+  var matS = new THREE.ShaderMaterial({
+    vertexShader:   vs,
+    fragmentShader: fsW,
+    uniforms:       { uTime:{value:0}, uAmp:{value:P.nAmp}, uFreq:{value:P.nFreq} },
+    wireframe:      true
+  });
+  var sphereMain = new THREE.Mesh(geo, matS);
+  Scn.add(sphereMain);
+
+   // Inner glow layer (slightly smaller)
+  var matI = new THREE.ShaderMaterial({
+    vertexShader:   vs,
+    fragmentShader: fsI,
+    uniforms:       { uTime:{value:0}, uAmp:{value:P.nAmp}, uFreq:{value:P.nFreq} },
+    wireframe:      true,
+    transparent:    true,
+    depthWrite:     false
+  });
+  var sphereInner = new THREE.Mesh(geo, matI);
+  sphereInner.scale.setScalar(0.99);
+  Scn.add(sphereInner);
+
+   // ── POST-PROCESSING ──
+  var ep = new THREE.EffectComposer(R);
+
+   // 1) Normal scene render
+  ep.addPass(new THREE.RenderPass(Scn, Cam));
+
+   // 2) Bloom
+  var bloom = new THREE.UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    P.bloomStr, P.bloomRad, P.bloomTh
+  );
+  ep.addPass(bloom);
+
+   // 3) Film (analog TV noise + scanlines)
+  var film = new THREE.ShaderPass(THREE.FilmShader);
+  film.uniforms['nIntensity'].value    = P.filmNoise;
+  film.uniforms['sIntensity'].value = P.filmScan;
+  ep.addPass(film);
+
+   // 4) RGB shift (chromatic aberration)
+  var rgbP = new THREE.ShaderPass(THREE.RGBShiftShader);
+  rgbP.uniforms['amount'].value = P.rgbShift;
+  rgbP.uniforms['angle'].value = 0;
+  ep.addPass(rgbP);
+
+   // ── lil-gui ──
+  var gui = new lil.GUI({closed:true, autoPlace:false});
+  gui.domElement.style.display = "none";
+
+  var gBox = document.createElement("div");
+  gBox.style.position  = "fixed";
+  gBox.style.top       = "0";
+  gBox.style.right     = "0";
+  gBox.style.zIndex    = "9999";
+  document.body.appendChild(gBox);
+  gBox.appendChild(gui.domElement);
+
+   // Sphere
+  var f1 = gui.addFolder("Sphere");
+  f1.add(P,"nAmp",0,0.8).step(0.01).name("Amplitude");
+  f1.add(P,"nFreq",0.5,8).step(0.1).name("Frequency");
+  f1.add(P,"nSpeed",0,2).step(0.01).name("Speed");
+
+   // Post FX
+  var f2 = gui.addFolder("Post FX");
+  f2.add(P,"bloomStr",0,5).step(0.01).name("Bloom Strength");
+  f2.add(P,"bloomRad",0,1.5).step(0.01).name("Bloom Radius");
+  f2.add(P,"bloomTh",0,1).step(0.01).name("Threshold");
+  f2.add(P,"rgbShift",0,0.01).step(0.0001).name("RGB Shift");
+  f2.add(P,"filmNoise",0,2).step(0.01).name("Film Noise");
+  f2.add(P,"filmScan",0,2).step(0.01).name("Film Scanlines");
+
+   // Misc
+  var f3 = gui.addFolder("Misc");
+  f3.add(P,"autoRot").name("Auto Rotate");
+  f3.add(P,"autoRotSp",0,5).step(0.01).name("Rot Speed");
+
+   // d key toggles
+  window.addEventListener("keydown", function(e){
+    if(e.key.toLowerCase()==="d"){
+      var vis = gui.domElement.style.display;
+      gui.domElement.style.display = (vis===""||vis==="none")?"block":"none";
+    }
+  });
+
+   // ── RESIZE ──
+  window.addEventListener("resize",function(){
+    var w=window.innerWidth, h=window.innerHeight;
+    Cam.aspect=w/h;
+    Cam.updateProjectionMatrix();
+    R.setSize(w,h);
+    R.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    ep.setSize(w,h);
+    bloom.setSize(w,h);
+    bloom.resolution.set(w,h);
+  });
+
+   // ── ANIMATION LOOP ──
+  var clk = new THREE.Clock();
+
+  function loop(){
+    requestAnimationFrame(loop);
+    var t=clk.getElapsedTime();
+
+      // shader uniforms
+    matS.uniforms.uFreq.value=P.nFreq;
+    matS.uniforms.uTime.value=t*P.nSpeed;
+    matI.uniforms.uFreq.value=P.nFreq;
+    matI.uniforms.uTime.value=t*P.nSpeed;
+
+      // post-FX
+    bloom.strength=P.bloomStr;
+    bloom.radius=P.bloomRad;
+    bloom.threshold=P.bloomTh;
+    rgbP.uniforms['amount'].value = P.rgbShift;
+    film.uniforms['nIntensity'].value=P.filmNoise;
+    film.uniforms['sIntensity'].value=P.filmScan;
+
+      // orbit
+    Ctr.autoRotate=P.autoRot;
+    Ctr.autoRotateSpeed=P.autoRotSp;
+    Ctr.update();
+    ep.render();
+  }
+
+  loop();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Liquid Sphere</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            overflow: hidden;
+            background: #000;
+            width: 100vw;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #debug-panel {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            padding: 16px;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 12px;
+            max-height: calc(100vh - 20px);
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            backdrop-filter: blur(10px);
+        }
+        #debug-panel.visible {
+            display: block;
+        }
+        .debug-section {
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .debug-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+        .debug-section-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #fff;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 11px;
+        }
+        .debug-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        .debug-row:last-child {
+            margin-bottom: 0;
+        }
+        .debug-label {
+            width: 120px;
+            color: #aaa;
+            font-size: 11px;
+        }
+        .debug-input {
+            flex: 1;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            padding: 0 8px;
+            color: #fff;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        .debug-input:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+        .debug-input:focus {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.4);
+            outline: none;
+        }
+        .debug-toggle {
+            width: 32px !important;
+            height: 16px !important;
+            border-radius: 8px !important;
+            position: relative !important;
+            appearance: none !important;
+            -webkit-appearance: none !important;
+            background: rgba(255, 255, 255, 0.2);
+            cursor: pointer;
+        }
+        .debug-toggle::after {
+            content: '';
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: #fff;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.2s;
+        }
+        .debug-toggle:checked::after {
+            transform: translateX(16px);
+        }
+        .debug-toggle:checked {
+            background: rgba(100, 200, 255, 0.5);
+        }
+        .debug-hint {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.4);
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 11px;
+            pointer-events: none;
+            user-select: none;
+        }
+        .debug-hint.hidden {
+            display: none;
+        }
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="debug-panel">
+        <div class="debug-section">
+            <div class="debug-section-title">Sphere Layout</div>
+            <div class="debug-row">
+                <span class="debug-label">Radius</span>
+                <input type="range" class="debug-input" data-param="sphere.radius" min="50" max="200" step="1">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Latitude Density</span>
+                <input type="range" class="debug-input" data-param="sphere.latDensity" min="10" max="60" step="1">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Longitude Density</span>
+                <input type="range" class="debug-input" data-param="sphere.lonDensity" min="10" max="60" step="1">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Rect Width</span>
+                <input type="range" class="debug-input" data-param="sphere.rectWidth" min="1" max="10" step="0.1">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Rect Height</span>
+                <input type="range" class="debug-input" data-param="sphere.rectHeight" min="1" max="20" step="0.1">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Gap</span>
+                <input type="range" class="debug-input" data-param="sphere.gap" min="0" max="5" step="0.1">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Displacement</span>
+                <input type="range" class="debug-input" data-param="sphere.displacement" min="0" max="30" step="0.1">
+            </div>
+        </div>
+        <div class="debug-section">
+            <div class="debug-section-title">Animation</div>
+            <div class="debug-row">
+                <span class="debug-label">Amplitude</span>
+                <input type="range" class="debug-input" data-param="animation.amplitude" min="0" max="50" step="0.1">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Frequency</span>
+                <input type="range" class="debug-input" data-param="animation.frequency" min="0.1" max="2" step="0.01">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Speed</span>
+                <input type="range" class="debug-input" data-param="animation.speed" min="0" max="3" step="0.01">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Noise Scale</span>
+                <input type="range" class="debug-input" data-param="animation.noiseScale" min="0.01" max="1" step="0.01">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Coherence</span>
+                <input type="range" class="debug-input" data-param="animation.coherence" min="0" max="1" step="0.01">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Auto Rotate</span>
+                <input type="checkbox" class="debug-toggle" data-param="animation.autoRotate">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Rotate Speed</span>
+                <input type="range" class="debug-input" data-param="animation.autoRotateSpeed" min="0" max="0.02" step="0.0001">
+            </div>
+        </div>
+        <div class="debug-section">
+            <div class="debug-section-title">Post Effects</div>
+            <div class="debug-row">
+                <span class="debug-label">RGB Shift</span>
+                <input type="range" class="debug-input" data-param="post.rgbShift" min="0" max="0.02" step="0.0001">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Blur</span>
+                <input type="range" class="debug-input" data-param="post.blurAmount" min="0" max="0.02" step="0.0001">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Gloss</span>
+                <input type="range" class="debug-input" data-param="post.gloss" min="0" max="1" step="0.01">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Vignette</span>
+                <input type="range" class="debug-input" data-param="post.vignette" min="0" max="1" step="0.01">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Scanlines</span>
+                <input type="range" class="debug-input" data-param="post.scanlines" min="0" max="1" step="0.01">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Noise</span>
+                <input type="range" class="debug-input" data-param="post.noise" min="0" max="0.5" step="0.01">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Effect Mix</span>
+                <input type="range" class="debug-input" data-param="post.effectMix" min="0" max="1" step="0.01">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Enable Post</span>
+                <input type="checkbox" class="debug-toggle" data-param="post.enabled">
+            </div>
+        </div>
+        <div class="debug-section">
+            <div class="debug-section-title">Camera</div>
+            <div class="debug-row">
+                <span class="debug-label">FOV</span>
+                <input type="range" class="debug-input" data-param="camera.fov" min="30" max="90" step="1">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Pixel Ratio</span>
+                <input type="range" class="debug-input" data-param="camera.pixelRatioCap" min="0.5" max="2" step="0.1">
+            </div>
+            <div class="debug-row">
+                <span class="debug-label">Reset</span>
+                <input type="button" class="debug-input" value="Reset All">
+            </div>
+        </div>
+    </div>
+    <div class="debug-hint" id="debug-hint">Press "d" to toggle debug panel</div>
+    <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+    // ============================================================
+    // CONFIGURATION
+    // ============================================================
+    const config = {
+        sphere: {
+            radius: 100,
+            latDensity: 30,
+            lonDensity: 50,
+            rectWidth: 3,
+            rectHeight: 8,
+            gap: 1,
+            displacement: 15
+        },
+        animation: {
+            amplitude: 10,
+            frequency: 0.5,
+            speed: 0.8,
+            noiseScale: 0.15,
+            coherence: 0.95,
+            autoRotate: true,
+            autoRotateSpeed: 0.002
+        },
+        post: {
+            rgbShift: 0.005,
+            blurAmount: 0.008,
+            gloss: 0.3,
+            vignette: 0.25,
+            scanlines: 0.2,
+            noise: 0.08,
+            effectMix: 1,
+            enabled: true
+        },
+        camera: {
+            fov: 45,
+            pixelRatioCap: 1.5
+        }
+    };
+
+    // ============================================================
+    // GLOBALS
+    // ============================================================
+    let scene, camera, renderer, controls;
+    let sphereGroup, rectMeshes = [];
+    let rectData = [];
+    let clock = new THREE.Clock();
+    let currentNoiseTime = 0;
+    let basePositions = [];
+    let targetPositions = [];
+
+    // Post-processing
+    let composer, renderTarget, copyPass, effectPass;
+    let postMaterial;
+
+    // Debug panel
+    const debugPanel = document.getElementById('debug-panel');
+    const debugHint = document.getElementById('debug-hint');
+    let debugVisible = false;
+
+    // ============================================================
+    // SIMPLE PERLIN NOISE IMPLEMENTATION
+    // ============================================================
+    class SimpleNoise {
+        constructor(seed = Math.random() * 10000) {
+            this.permutation = new Uint8Array(512);
+            this.p = new Uint8Array(512);
+            const rand = (i) => {
+                const x = Math.sin(seed + i) * 43758.5453123;
+                return Math.floor((x - Math.floor(x)) * 256);
+            };
+            for (let i = 0; i < 256; i++) {
+                this.permutation[i] = i;
+            }
+            for (let i = 0; i < 256; i++) {
+                const j = rand(i) % 256;
+                [this.permutation[i], this.permutation[j]] = [this.permutation[j], this.permutation[i]];
+            }
+            for (let i = 0; i < 512; i++) {
+                this.p[i] = this.permutation[i % 256];
+            }
+        }
+
+        fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+        lerp(a, b, t) { return a + t * (b - a); }
+        grad(hash, x, y) {
+            const h = hash & 3;
+            const u = h < 2 ? x : y;
+            const v = h < 2 ? y : x;
+            return ((h & 1) ? -u : u) + ((h & 2) ? -v : v);
+        }
+
+        noise(x, y) {
+            const X = Math.floor(x) & 255;
+            const Y = Math.floor(y) & 256;
+            const xf = x - Math.floor(x);
+            const yf = y - Math.floor(y);
+            const u = this.fade(xf);
+            const v = this.fade(yf);
+            const A = this.p[X] + Y;
+            const B = this.p[X + 1] + Y;
+            return this.lerp(
+                this.lerp(this.grad(this.p[A], xf, yf), this.grad(this.p[B], xf - 1, yf), u),
+                this.lerp(this.grad(this.p[A + 1], xf, yf - 1), this.grad(this.p[B + 1], xf - 1, yf - 1), u),
+                v
+            );
+        }
+    }
+
+    const noise = new SimpleNoise();
+
+    // ============================================================
+    // INITIALIZATION
+    // ============================================================
+    function init() {
+        // Scene
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x000000);
+
+        // Camera
+        camera = new THREE.PerspectiveCamera(
+            config.camera.fov,
+            window.innerWidth / window.innerHeight,
+            0.1,
+            2000
+        );
+        camera.position.z = 280;
+
+        // Renderer
+        renderer = new THREE.WebGLRenderer({
+            canvas: document.getElementById('canvas'),
+            antialias: true,
+            powerPreference: 'high-performance'
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, config.camera.pixelRatioCap));
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+        // Controls
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 100;
+        controls.maxDistance = 500;
+        controls.autoRotate = false;
+        controls.autoRotateSpeed = 0;
+
+        // Create sphere
+        createSphere();
+
+        // Setup post-processing
+        setupPostProcessing();
+
+        // Event listeners
+        window.addEventListener('resize', onResize);
+        document.addEventListener('keydown', onKeyDown);
+
+        // Start animation
+        animate();
+    }
+
+    // ============================================================
+    // SPHERE CREATION
+    // ============================================================
+    function createSphere() {
+        if (sphereGroup) {
+            scene.remove(sphereGroup);
+            rectMeshes.forEach(mesh => {
+                scene.remove(mesh);
+                mesh.geometry.dispose();
+                mesh.material.dispose();
+            });
+            rectMeshes = [];
+            rectData = [];
+            basePositions = [];
+            targetPositions = [];
+        }
+
+        sphereGroup = new THREE.Group();
+        scene.add(sphereGroup);
+
+        const latCount = config.sphere.latDensity;
+        const lonCount = config.sphere.lonDensity;
+        const totalRects = latCount * lonCount;
+
+        basePositions = new Float32Array(totalRects * 3);
+        targetPositions = new Float32Array(totalRects * 3);
+
+        const rectGeometry = new THREE.PlaneGeometry(
+            config.sphere.rectWidth,
+            config.sphere.rectHeight
+        );
+        const rectMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false
+        });
+
+        let idx = 0;
+        for (let lat = 0; lat < latCount; lat++) {
+            const phi = (lat + 0.5) * Math.PI / latCount;
+            const sinPhi = Math.sin(phi);
+            const cosPhi = Math.cos(phi);
+
+            for (let lon = 0; lon < lonCount; lon++) {
+                const theta = (lon + 0.5) * 2 * Math.PI / lonCount;
+                const sinTheta = Math.sin(theta);
+                const cosTheta = Math.cos(theta);
+
+                   // Base position on sphere surface with gap
+                const gapOffset = config.sphere.radius * (1 + config.sphere.gap / 10);
+                const x = gapOffset * sinPhi * cosTheta;
+                const y = gapOffset * cosPhi;
+                const z = gapOffset * sinPhi * sinTheta;
+
+                basePositions[idx * 3] = x;
+                basePositions[idx * 3 + 1] = y;
+                basePositions[idx * 3 + 2] = z;
+
+                targetPositions[idx * 3] = x;
+                targetPositions[idx * 3 + 1] = y;
+                targetPositions[idx * 3 + 2] = z;
+
+                // Create rectangle mesh
+                const mesh = new THREE.Mesh(rectGeometry, rectMaterial.clone());
+                mesh.visible = false;
+
+                // Compute tangent-aligned orientation
+                const pos = new THREE.Vector3(x, y, z);
+                const normal = pos.clone().normalize();
+                const up = Math.abs(normal.y) > 0.99 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+                const tangent = new THREE.Vector3().crossVectors(normal, up).normalize();
+                const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
+
+                mesh.position.copy(pos);
+                mesh.lookAt(pos.clone().add(normal));
+
+                // Apply tangent-aligned rotation
+                const quaternion = new THREE.Quaternion();
+                quaternion.setFromUnitVectors(
+                    new THREE.Vector3(0, 0, 1),
+                    normal
+                );
+                mesh.quaternion.copy(quaternion);
+
+                sphereGroup.add(mesh);
+                rectMeshes.push(mesh);
+                rectData.push({
+                    offset: 0,
+                    baseNormal: normal.clone(),
+                    phase: Math.random() * Math.PI * 2
+                });
+                idx++;
+            }
+        }
+
+        // Enable all meshes
+        rectMeshes.forEach(mesh => mesh.visible = true);
+    }
+
+    // ============================================================
+    // POST PROCESSING SETUP
+    // ============================================================
+    function setupPostProcessing() {
+        const params = {
+            resolution: new THREE.Vector2(256, 256),
+            RGBShift: 0.02,
+            blurAmount: 0.008,
+            gloss: 0.3,
+            vignette: 0.25,
+            scanlines: 0.2,
+            noise: 0.08,
+            effectMix: 1
+        };
+
+        renderTarget = new THREE.WebGLRenderTarget(
+            window.innerWidth,
+            window.innerHeight,
+            {
+                minFilter: THREE.LinearFilter,
+                magFilter: THREE.LinearFilter,
+                type: THREE.FloatType
+            }
+         );
+
+        postMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                tDiffuse: { value: null },
+                resolution: { value: new THREE.Vector2(1, 1) },
+                time: { value: 0 },
+                RGBShift: { value: params.RGBShift },
+                blurAmount: { value: params.blurAmount },
+                gloss: { value: params.gloss },
+                vignette: { value: params.vignette },
+                scanlines: { value: params.scanlines },
+                noise: { value: params.noise },
+                effectMix: { value: params.effectMix }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform vec2 resolution;
+                uniform float time;
+                uniform float RGBShift;
+                uniform float blurAmount;
+                uniform float gloss;
+                uniform float vignette;
+                uniform float scanlines;
+                uniform float noise;
+                uniform float effectMix;
+
+                varying vec2 vUv;
+
+                float random(vec2 p) {
+                    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+                }
+
+                float noise2d(vec2 p) {
+                    vec2 i = floor(p);
+                    vec2 f = fract(p);
+                    f = f * f * (3.0 - 2.0 * f);
+                    return mix(mix(random(i), random(i + vec2(1.0, 0.0)), f.x),
+                               mix(random(i + vec2(0.0, 1.0)), random(i + vec2(1.0, 1.0)), f.x), f.y);
+                }
+
+                void main() {
+                    vec2 uv = vUv;
+                    vec3 color = texture2D(tDiffuse, uv).rgb;
+
+                    // Sample with RGB shift
+                    float r = texture2D(tDiffuse, uv + vec2(RGBShift, 0.0)).r;
+                    float g = texture2D(tDiffuse, uv).g;
+                    float b = texture2D(tDiffuse, uv - vec2(RGBShift, 0.0)).b;
+                    color = vec3(r, g, b);
+
+                    // Add blur/gloss effect
+                    float blur = texture2D(tDiffuse, uv + vec2(blurAmount, 0.0)).r * 0.3 +
+                                 texture2D(tDiffuse, uv - vec2(blurAmount, 0.0)).r * 0.3 +
+                                 texture2D(tDiffuse, uv + vec2(0.0, blurAmount)).g * 0.2 +
+                                 texture2D(tDiffuse, uv - vec2(0.0, blurAmount)).g * 0.2;
+                    color.rgb = mix(color.rgb, vec3(blur), gloss);
+
+                    // Vignette
+                    float dist = distance(uv, vec2(0.5));
+                    float vig = 1.0 - vignette * smoothstep(0.3, 0.0, dist);
+                    color *= vig;
+
+                    // Scanlines
+                    float scanlineFreq = 1000.0;
+                    float scanline = step(0.0, sin(uv.y * scanlineFreq));
+                    float scan = 1.0 - scanlines * 0.5 * (1.0 - scanline);
+
+                               // TV noise - subtle
+                    float n = noise * 0.4 * (random(uv * 3.0 + time * 50.0) - 0.5);
+                    color += vec3(n * 2.0, n * 2.0, n * 2.0);
+
+                                // TV scanline flicker
+                    float flicker = 1.0 + noise * 0.1 * sin(time * 100.0);
+                    color *= flicker;
+
+                                // Apply scanlines
+                    color *= scan;
+                         vec3 finalColor = mix(color, vec3(0.0), 1.0 - effectMix);
+                    gl_FragColor = vec4(finalColor, 1.0);
+                 }
+             `
+          });
+
+          copyPass = new RenderPass(scene, camera);
+          copyPass.enabled = true;
+          copyPass.renderToScreen = false;
+
+          effectPass = new ShaderPass(postMaterial);
+          effectPass.enabled = config.post.enabled;
+          effectPass.renderToScreen = true;
+
+          composer = new EffectComposer(renderer, renderTarget);
+          composer.addPass(copyPass);
+          composer.addPass(effectPass);
+
+          postMaterial.uniforms.tDiffuse.value = renderTarget.texture;
+    }
+
+    // ============================================================
+    // ANIMATION LOOP
+    // ============================================================
+    function animate() {
+        requestAnimationFrame(animate);
+
+        const delta = clock.getDelta();
+        currentNoiseTime += delta * config.animation.speed;
+        const noiseTime = currentNoiseTime * config.animation.frequency;
+
+        // Update sphere position
+        updateSpherePositions(noiseTime);
+
+        // Update controls
+        controls.update(delta);
+
+        // Update post-processing uniforms
+        if (postMaterial) {
+            postMaterial.uniforms.time.value = currentNoiseTime;
+        }
+
+        // Render
+        if (config.post.enabled) {
+            composer.render();
+        } else {
+            renderer.render(scene, camera);
+        }
+    }
+
+    // ============================================================
+    // SPHERE POSITION UPDATES
+    // ============================================================
+    function updateSpherePositions(noiseTime) {
+        const displacement = config.sphere.displacement;
+
+        for (let i = 0; i < rectData.length; i++) {
+            const data = rectData[i];
+            const basePos = new THREE.Vector3(
+                basePositions[i * 3],
+                basePositions[i * 3 + 1],
+                basePositions[i * 3 + 2]
+            );
+
+            // Procedural noise-based displacement
+            const noiseVal = noise.noise(
+                data.baseNormal.x * config.animation.noiseScale + noiseTime,
+                data.baseNormal.y * config.animation.noiseScale + noiseTime * 0.7
+            );
+
+              // Smooth interpolation between current and target
+            const targetOffset = noiseVal * displacement;
+            data.offset = data.offset * config.animation.coherence + targetOffset * (1 - config.animation.coherence);
+
+            // Update position along normal
+            const newPos = basePos.clone().add(data.baseNormal.clone().multiplyScalar(data.offset));
+
+            // Update mesh
+            const mesh = rectMeshes[i];
+            mesh.position.copy(newPos);
+
+            // Store target position
+            targetPositions[i * 3] = newPos.x;
+            targetPositions[i * 3 + 1] = newPos.y;
+            targetPositions[i * 3 + 2] = newPos.z;
+        }
+
+        // Auto rotation
+        if (config.animation.autoRotate) {
+            sphereGroup.rotation.y += config.animation.autoRotateSpeed;
+        }
+    }
+
+    // ============================================================
+    // RESIZE HANDLER
+    // ============================================================
+    function onResize() {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, config.camera.pixelRatioCap));
+
+        renderTarget.setSize(width, height);
+
+        if (postMaterial) {
+            postMaterial.uniforms.resolution.value.set(width, height);
+        }
+
+        composer.resize();
+    }
+
+    // ============================================================
+    // KEY HANDLER
+    // ============================================================
+    function onKeyDown(event) {
+        if (event.key === 'd' || event.key === 'D') {
+            debugVisible = !debugVisible;
+            debugPanel.classList.toggle('visible', debugVisible);
+            debugHint.classList.toggle('hidden', debugVisible);
+        }
+    }
+
+    // ============================================================
+    // DEBUG UI HANDLERS
+    // ============================================================
+    function setupDebugUI() {
+        const inputs = debugPanel.querySelectorAll('.debug-input');
+
+        inputs.forEach(input => {
+            const param = input.dataset.param;
+            if (!param) return;
+
+            const parts = param.split('.');
+            let obj = config;
+            for (let i = 0; i < parts.length - 1; i++) {
+                obj = obj[parts[i]];
+            }
+            const key = parts[parts.length - 1];
+            const value = obj[key];
+
+            if (input.type === 'range') {
+                input.min = input.min || 0;
+                input.max = input.max || 1;
+                input.step = input.step || 0.01;
+                input.value = value;
+
+                input.addEventListener('input', () => {
+                    const newValue = parseFloat(input.value);
+                    obj[key] = newValue;
+
+                    // Handle specific parameter changes
+                    if (param === 'camera.fov') {
+                        camera.fov = newValue;
+                        camera.updateProjectionMatrix();
+                    } else if (param === 'camera.pixelRatioCap') {
+                        renderer.setPixelRatio(Math.min(window.devicePixelRatio, newValue));
+                      } else if (param.startsWith('sphere.')) {
+                        createSphere();
+                        } else if (param.startsWith('post.')) {
+                        if (postMaterial) {
+                          const key = param.split('.')[1];
+                          switch(key) {
+                            case 'rgbShift': postMaterial.uniforms.RGBShift.value = newValue; break;
+                            case 'blurAmount': postMaterial.uniforms.blurAmount.value = newValue; break;
+                            case 'gloss': postMaterial.uniforms.gloss.value = newValue; break;
+                            case 'vignette': postMaterial.uniforms.vignette.value = newValue; break;
+                            case 'scanlines': postMaterial.uniforms.scanlines.value = newValue; break;
+                            case 'noise': postMaterial.uniforms.noise.value = newValue; break;
+                            case 'effectMix': postMaterial.uniforms.effectMix.value = newValue; break;
+                          }
+                        }
+                       }
+                });
+            } else if (input.type === 'checkbox') {
+                input.checked = value;
+                input.addEventListener('change', () => {
+                    obj[key] = input.checked;
+                    if (param === 'post.enabled' && postMaterial) {
+                        effectPass.enabled = input.checked;
+                    }
+                });
+            } else if (input.type === 'button') {
+                input.addEventListener('click', () => {
+                    window.location.reload();
+                });
+            }
+        });
+    }
+
+    // ============================================================
+    // START
+    // ============================================================
+    init();
+    setupDebugUI();
+    </script>
+</body>
+</html>
