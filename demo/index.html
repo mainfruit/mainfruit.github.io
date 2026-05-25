@@ -37,7 +37,7 @@
   .section p.lead{color:#555555;font-size:.85rem;margin-bottom:1rem}
 
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:.75rem}
-  .grid a{
+  .grid a{position:relative;
     display:flex;align-items:center;gap:.6rem;
     padding:.75rem 1rem;border-radius:var(--radius);
     background:var(--card);border:1px solid #262626;
@@ -54,6 +54,8 @@
   .grid a .tag.model-gemini{background:var(--tag-gemini-bg);color:var(--tag-gemini-fg)}
   .grid a .tag.model-opencode{background:var(--tag-opencode-bg);color:var(--tag-opencode-fg)}
   .grid a .tag.model-pi{background:var(--tag-pi-bg);color:var(--tag-pi-fg)}
+  .grid a .tag.star-label{background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#1a1a1a;font-weight:700;animation:star-pulse 2s ease-in-out infinite alternate} @keyframes star-pulse{0%{box-shadow:0 0 0 0 rgba(251,191,36,.3)}100%{box-shadow:0 0 8px 2px rgba(251,191,36,.4)}}
+  .corner-star{position:absolute;top:-1px;right:-1px;font-size:1.1rem;line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,.6))}
 
   .folder-section{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem}
   .folder-section a{
@@ -78,7 +80,7 @@
 <!-- 2026 -->
 <section class="section">
   <h2>2026</h2>
-  <p class="lead">Here are some vibe coded ideas — click to explore each experiment. Keypress "d" for toggle Debug-UI.</p>
+  <p class="lead">Here are some vibe coded results of more or less the same prompt, executed from different LLM's, runners and coding assistants. — click to explore each experiment. Keypress "d" for toggle Debug-UI. Highlights marked with a ⭐.</p>
   <div class="grid">
     <a href="vibe/sphere/sphere-claude-omlx-gemma4.html" target="_blank"><span class="tag model-claude">claude</span>sphere-claude-omlx-gemma4.html</a>
     <a href="vibe/sphere/sphere-claude-qwen3-coder-next1.html" target="_blank"><span class="tag model-claude">claude</span>sphere-claude-qwen3-coder-next1.html</a>
@@ -95,13 +97,13 @@
     <a href="vibe/sphere/sphere-codex-qwen35coding1.html" target="_blank"><span class="tag model-codex">codex</span>sphere-codex-qwen35coding1.html</a>
     <a href="vibe/sphere/sphere-codex-qwen35coding2.html" target="_blank"><span class="tag model-codex">codex</span>sphere-codex-qwen35coding2.html</a>
     <a href="vibe/sphere/sphere-codex-qwen35coding3.html" target="_blank"><span class="tag model-codex">codex</span>sphere-codex-qwen35coding3.html</a>
-    <a href="vibe/sphere/sphere-codex-qwen35coding4.html" target="_blank"><span class="tag model-codex">codex</span>sphere-codex-qwen35coding4.html</a>
+    <a href="vibe/sphere/sphere-codex-qwen35coding4.html" target="_blank"><span class="tag model-codex">codex</span>sphere-codex-qwen35coding4.html<span class="corner-star">⭐</span></a>
     <a href="vibe/sphere/sphere-codex-qwen36coding.html" target="_blank"><span class="tag model-codex">codex</span>sphere-codex-qwen36coding.html</a>
-    <a href="vibe/sphere/sphere-codex-qwen3coder.html" target="_blank"><span class="tag model-codex">codex</span>sphere-codex-qwen3coder.html</a>
-    <a href="vibe/sphere/sphere-crush-qwen35coding1.html" target="_blank"><span class="tag model-crush">crush</span>sphere-crush-qwen35coding1.html</a>
+    <a href="vibe/sphere/sphere-codex-qwen3coder.html" target="_blank"><span class="tag model-codex">codex</span>sphere-codex-qwen3coder.html<span class="corner-star">⭐</span></a>
+    <a href="vibe/sphere/sphere-crush-qwen35coding1.html" target="_blank"><span class="tag model-crush">crush</span>sphere-crush-qwen35coding1.html<span class="corner-star">⭐</span></a>
     <a href="vibe/sphere/sphere-droid-gemma4-26b-a4b-it-q8_0.html" target="_blank"><span class="tag model-droid">droid</span>sphere-droid-gemma4-26b-a4b-it-q8_0.html</a>
     <a href="vibe/sphere/sphere-droid-qwen35coding1.html" target="_blank"><span class="tag model-droid">droid</span>sphere-droid-qwen35coding1.html</a>
-    <a href="vibe/sphere/sphere-droid-qwen35coding2.html" target="_blank"><span class="tag model-droid">droid</span>sphere-droid-qwen35coding2.html</a>
+    <a href="vibe/sphere/sphere-droid-qwen35coding2.html" target="_blank"><span class="tag model-droid">droid</span>sphere-droid-qwen35coding2.html<span class="corner-star">⭐</span></a>
     <a href="vibe/sphere/sphere-droidopencode-qwen35coding1.html" target="_blank"><span class="tag model-droid">droid</span>sphere-droidopencode-qwen35coding1.html</a>
     <a href="vibe/sphere/sphere-gemini1.html" target="_blank"><span class="tag model-gemini">gemini</span>sphere-gemini1.html</a>
     <a href="vibe/sphere/sphere-gemini2.html" target="_blank"><span class="tag model-gemini">gemini</span>sphere-gemini2.html</a>
@@ -112,14 +114,14 @@
     <a href="vibe/sphere/sphere-opencode-gemma4-26b-a4b-it-q8_0_2.html" target="_blank"><span class="tag model-opencode">opencode</span>sphere-opencode-gemma4-26b-a4b-it-q8_0_2.html</a>
     <a href="vibe/sphere/sphere-opencode-qwen35coding-long.html" target="_blank"><span class="tag model-opencode">opencode</span>sphere-opencode-qwen35coding-long.html</a>
     <a href="vibe/sphere/sphere-opencode-qwen35coding-short.html" target="_blank"><span class="tag model-opencode">opencode</span>sphere-opencode-qwen35coding-short.html</a>
-    <a href="vibe/sphere/sphere-opencode-qwen35coding.html" target="_blank"><span class="tag model-opencode">opencode</span>sphere-opencode-qwen35coding.html</a>
-    <a href="vibe/sphere/sphere-pi-gemma4-26b-a4b-it-q8_0.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-gemma4-26b-a4b-it-q8_0.html</a>
-    <a href="vibe/sphere/sphere-pi-glm-4.7-flash.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-glm-4.7-flash.html</a>
+    <a href="vibe/sphere/sphere-opencode-qwen35coding.html" target="_blank"><span class="tag model-opencode">opencode</span>sphere-opencode-qwen35coding.html<span class="corner-star">⭐</span></a>
+    <a href="vibe/sphere/sphere-pi-gemma4-26b-a4b-it-q8_0.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-gemma4-26b-a4b-it-q8_0.html<span class="corner-star">⭐</span></a>
+    <a href="vibe/sphere/sphere-pi-glm-4.7-flash.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-glm-4.7-flash.html<span class="corner-star">⭐</span></a>
     <a href="vibe/sphere/sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-1.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-1.html</a>
-    <a href="vibe/sphere/sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-2.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-2.html</a>
+    <a href="vibe/sphere/sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-2.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-2.html<span class="corner-star">⭐</span></a>
     <a href="vibe/sphere/sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-3.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-3.html</a>
     <a href="vibe/sphere/sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-4.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-4.html</a>
-    <a href="vibe/sphere/sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-5.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-5.html</a>
+    <a href="vibe/sphere/sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-5.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-omlx-gemma-4-26B-A4B-it-MLX-8bit-5.html<span class="corner-star">⭐</span></a>
     <a href="vibe/sphere/sphere-pi-qwen35coding.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-qwen35coding.html</a>
     <a href="vibe/sphere/sphere-pi-qwen36coding.html" target="_blank"><span class="tag model-pi">pi</span>sphere-pi-qwen36coding.html</a>
   </div>
