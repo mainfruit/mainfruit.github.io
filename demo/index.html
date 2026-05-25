@@ -7,47 +7,44 @@
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   :root{
-    --bg:#fafafa;--fg:#1a1a1a;--accent:#2563eb;
-    --card:#fff;--shadow:0 1px 3px rgba(0,0,0,.08);
+    --bg:#111111;--fg:#c0c0c0;--accent:#777777;
+    --card:#1a1a1a;--shadow:0 1px 3px rgba(0,0,0,.5);
     --radius:12px;--max:960px;
-    --tag-bg:#f1f5f9;--tag-fg:#475569;
-    --tag-claude-bg:#fef3c7;--tag-claude-fg:#92400e;
-    --tag-codex-bg:#dbeafe;--tag-codex-fg:#1e40af;
-    --tag-crush-bg:#fce7f3;--tag-crush-fg:#9d174d;
-    --tag-droid-bg:#d1fae5;--tag-droid-fg:#065f46;
-    --tag-gemini-bg:#ede9fe;--tag-gemini-fg:#5b21b6;
-    --tag-opencode-bg:#ffedd5;--tag-opencode-fg:#c2410c;
-    --tag-pi-bg:#f3e8ff;--tag-pi-fg:#6b21a8;
+    --tag-bg:#262626;--tag-fg:#666666;
+    --tag-claude-bg:#2e2b1e;--tag-claude-fg:#bfb88a;
+    --tag-codex-bg:#1e212e;--tag-codex-fg:#9aabc0;
+    --tag-crush-bg:#2e1e2b;--tag-crush-fg:#c09aaf;
+    --tag-droid-bg:#1e2e24;--tag-droid-fg:#9abfa8;
+    --tag-gemini-bg:#261e2e;--tag-gemini-fg:#b49ac0;
+    --tag-opencode-bg:#2e261e;--tag-opencode-fg:#bf9a7e;
+    --tag-pi-bg:#2a1e2e;--tag-pi-fg:#c09ab8;
   }
   html{font-family:'Inter',system-ui,-apple-system,sans-serif;
     background:var(--bg);color:var(--fg);line-height:1.6}
   body{max-width:var(--max);margin:0 auto;padding:2rem 1.5rem 4rem}
 
-  header{text-align:center;margin-bottom:3rem;padding-bottom:2rem;border-bottom:2px solid #e2e8f0}
+  header{text-align:center;margin-bottom:3rem;padding-bottom:2rem;border-bottom:2px solid #262626}
   header h1{font-size:2rem;font-weight:800;letter-spacing:-.03em;margin-bottom:.25rem;
-    background:linear-gradient(135deg,#2563eb,#7c3aed);-webkit-background-clip:text;
+    background:linear-gradient(135deg,#888,#bbb);-webkit-background-clip:text;
     -webkit-text-fill-color:transparent}
-  header .year-badge{display:inline-block;background:var(--accent);color:#fff;
-    font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
-    padding:.2rem .7rem;border-radius:20px;vertical-align:middle}
-  header p{color:#64748b;font-size:.9rem;margin-top:.5rem}
+  header p{color:#555555;font-size:.9rem;margin-top:.5rem}
 
   .section{margin-bottom:3rem}
   .section h2{font-size:1.1rem;font-weight:700;margin-bottom:.2rem;
     display:flex;align-items:center;gap:.5rem}
   .section h2::before{content:'';width:4px;height:1.2em;border-radius:2px;
     background:var(--accent);display:inline-block}
-  .section p.lead{color:#64748b;font-size:.85rem;margin-bottom:1rem}
+  .section p.lead{color:#555555;font-size:.85rem;margin-bottom:1rem}
 
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:.75rem}
   .grid a{
     display:flex;align-items:center;gap:.6rem;
     padding:.75rem 1rem;border-radius:var(--radius);
-    background:var(--card);border:1px solid #e2e8f0;
+    background:var(--card);border:1px solid #262626;
     box-shadow:var(--shadow);text-decoration:none;color:var(--fg);
     font-size:.78rem;transition:transform .15s,box-shadow .15s
   }
-  .grid a:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.1)}
+  .grid a:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(160,160,160,.12);border-color:#3a3a3a}
   .grid a .tag{flex-shrink:0;font-size:.65rem;font-weight:600;text-transform:uppercase;
     letter-spacing:.04em;padding:.15rem .45rem;border-radius:6px}
   .grid a .tag.model-claude{background:var(--tag-claude-bg);color:var(--tag-claude-fg)}
@@ -61,14 +58,14 @@
   .folder-section{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem}
   .folder-section a{
     display:inline-block;padding:.5rem 1.2rem;border-radius:var(--radius);
-    background:var(--card);border:1px solid #e2e8f0;
+    background:var(--card);border:1px solid #262626;
     box-shadow:var(--shadow);text-decoration:none;color:var(--fg);
     font-weight:600;font-size:.85rem;transition:transform .15s,box-shadow .15s
   }
-  .folder-section a:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.1)}
+  .folder-section a:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(160,160,160,.12);border-color:#3a3a3a}
 
-  footer{margin-top:4rem;padding-top:1.5rem;border-top:1px solid #e2e8f0;
-    text-align:center;color:#94a3b8;font-size:.75rem}
+  footer{margin-top:4rem;padding-top:1.5rem;border-top:1px solid #262626;
+    text-align:center;color:#444444;font-size:.75rem}
 </style>
 </head>
 <body>
