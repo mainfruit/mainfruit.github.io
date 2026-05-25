@@ -39,30 +39,30 @@
         // --- CONFIG & STATE ---
         const params = {
             // Blob / Noise
-            noiseAmplitude: 0.25,
-            noiseScale: 0.8,
-            noiseSpeed: 0.5,
-            blobCount: 6,
-            blobSpeed: 1.0,
-            blobScale: 1.0,
-            attraction: 0.2,
+            noiseAmplitude: 1.00,
+            noiseScale: 0.22,
+            noiseSpeed: 0.7,
+            blobCount: 15,
+            blobSpeed: 3.0,
+            blobScale: 3.0,
+            attraction: 0.0,
             absorptionRate: 0.05,
             
             // Grid
-            gridDetail: 64,
+            gridDetail: 22,
             gridIntensity: 1.0,
 
             // Post FX
-            bloomStrength: 1.5,
+            bloomStrength: 0.7,
             bloomRadius: 0.4,
             bloomThreshold: 0.1,
-            rgbShiftAmount: 0.003,
-            filmNoise: 0.3,
-            filmScanline: 0.4,
-            tvDistortion: 0.15,
+            rgbShiftAmount: 0.024,
+            filmNoise: 0.8,
+            filmScanline: 0.75,
+            tvDistortion: 0.5,
 
             // Misc
-            autoRotate: true,
+            autoRotate: false,
             autoRotateSpeed: 0.5
         };
 
@@ -173,7 +173,7 @@
 
         // --- MAIN SETUP ---
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const camera = new THREE.PerspectiveCamera(100, window.innerWidth / window.innerHeight, 0.1, 1000);
         camera.position.z = 15;
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
